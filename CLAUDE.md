@@ -4,7 +4,9 @@ Sentinel is a security-hardened agent runtime with process isolation between the
 
 ## Next Step
 
-**Implement Phase 1.5: Policy & Permissions Redesign** — see [`docs/plans/2026-03-05-policy-permissions-redesign.md`](docs/plans/2026-03-05-policy-permissions-redesign.md). Design approved; needs implementation plan (`/superpowers:write-plan`) then TDD execution.
+**Implement Phase 1.5: Policy & Permissions Redesign** — design and implementation plan ready:
+- Design: [`docs/plans/2026-03-05-policy-permissions-redesign.md`](docs/plans/2026-03-05-policy-permissions-redesign.md)
+- Implementation: [`docs/plans/2026-03-05-policy-permissions-implementation.md`](docs/plans/2026-03-05-policy-permissions-implementation.md) (10 tasks, TDD, use `/superpowers:execute-plan`)
 
 
 ## Quick Commands
@@ -39,6 +41,7 @@ pnpm install
 | Document | Purpose |
 |----------|---------|
 | `docs/plans/2026-03-05-policy-permissions-redesign.md` | Phase 1.5 design doc — policy document schema, classify() flow, workspace enforcement, testing strategy |
+| `docs/plans/2026-03-05-policy-permissions-implementation.md` | Phase 1.5 implementation plan — 10 TDD tasks, exact file paths, test code, commit points |
 | `docs/server-hardening.md` | Infrastructure hardening reference with Sentinel architecture mapping, CF Workers checklist, Replit agent security lessons, and security framework references |
 | `docs/sentinel-hermes-addendum.md` | Hermes Agent feature additions [H1]-[H4] (ComputeBackend, bash classifier, session scoping, skill evaluation) |
 | `.claude/agents/security-reviewer.md` | Subagent prompt for parallel security review |
