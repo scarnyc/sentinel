@@ -4,9 +4,9 @@ Sentinel is a security-hardened agent runtime with process isolation between the
 
 ## Next Step
 
-**Implement Phase 1.5: Policy & Permissions Redesign** — design and implementation plan ready:
+**Execute Phase 1.5 implementation plan** — run `/superpowers:execute-plan` to begin:
 - Design: [`docs/plans/2026-03-05-policy-permissions-redesign.md`](docs/plans/2026-03-05-policy-permissions-redesign.md)
-- Implementation: [`docs/plans/2026-03-05-policy-permissions-implementation.md`](docs/plans/2026-03-05-policy-permissions-implementation.md) (10 tasks, TDD, use `/superpowers:execute-plan`)
+- Implementation: [`docs/plans/2026-03-05-policy-permissions-implementation.md`](docs/plans/2026-03-05-policy-permissions-implementation.md) (10 tasks, TDD, ~80 new tests)
 
 
 ## Quick Commands
