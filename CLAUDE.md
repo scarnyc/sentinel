@@ -2,6 +2,10 @@
 
 Sentinel is a security-hardened agent runtime with process isolation between the agent (untrusted) and executor (trusted). Built as a local-first MVP, with Cloudflare Workers deployment planned for Phase 2.
 
+## Next Step
+
+**Implement Phase 1.5: Policy & Permissions Redesign** — see [`docs/plans/2026-03-05-policy-permissions-redesign.md`](docs/plans/2026-03-05-policy-permissions-redesign.md). Design approved; needs implementation plan (`/superpowers:write-plan`) then TDD execution.
+
 
 ## Quick Commands
 
