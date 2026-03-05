@@ -253,7 +253,7 @@ Defined in `.claude/settings.json` — includes wrangler, test, lint, and typech
 
 ## Build Progress
 
-> Updated 2026-03-05: Hybrid build plan. Phase 1 = local MVP (Docker), Phase 2 = CF Workers.
+> Updated 2026-03-05: Phase 1 complete (163 tests, 7 packages). Docker not yet validated (not installed on Mac mini). Phase 2 = CF Workers.
 
 ### Phase 1: Local MVP
 
@@ -263,43 +263,54 @@ Defined in `.claude/settings.json` — includes wrangler, test, lint, and typech
 - [x] Create monorepo scaffolding (pnpm workspace, tsconfig, biome, vitest)
 - [x] Verify toolchain (pnpm install, biome check, tsc, vitest)
 
-#### Step 1 — `packages/types`
-- [ ] ActionManifest, ActionCategory, ToolResult, ToolName (string + constants)
-- [ ] PolicyDecision, SentinelConfig, ToolClassification, ClassificationOverride
-- [ ] AuditEntry, AgentCard, A2ATask, A2AArtifact (stubs)
-- [ ] McpServerConfig, ToolRegistryEntry (MCP compatibility)
+#### Step 1 — `packages/types` ✅
+- [x] ActionManifest, ActionCategory, ToolResult, ToolName (string + constants)
+- [x] PolicyDecision, SentinelConfig, ToolClassification, ClassificationOverride
+- [x] AuditEntry, AgentCard, A2ATask, A2AArtifact (stubs)
+- [x] McpServerConfig, ToolRegistryEntry (MCP compatibility)
 
-#### Step 2 — `packages/crypto`
-- [ ] CredentialVault class (AES-256-GCM, PBKDF2 SHA-512 600k iterations)
-- [ ] Tests: round-trip, wrong password, destroy zeros key, no plaintext in file
+#### Step 2 — `packages/crypto` ✅
+- [x] CredentialVault class (AES-256-GCM, PBKDF2 SHA-512 600k iterations)
+- [x] Tests: round-trip, wrong password, destroy zeros key, no plaintext in file (8 tests)
 
-#### Step 3 — `packages/policy`
-- [ ] classify(manifest, config) → PolicyDecision
-- [ ] Bash parser: read/write/dangerous classification
-- [ ] MCP tool classification (unknown = write, per-server overrides)
-- [ ] Tests: 9+ classification rules with 3+ cases each
+#### Step 3 — `packages/policy` ✅
+- [x] classify(manifest, config) → PolicyDecision
+- [x] Bash parser: read/write/dangerous classification
+- [x] MCP tool classification (unknown = write, per-server overrides)
+- [x] Tests: 94 tests covering classification rules
 
-#### Step 4 — `packages/audit`
-- [ ] AuditLogger class (SQLite, append-only)
-- [ ] Credential redaction in parameters_summary
-- [ ] Tests: round-trip, redaction, session filtering
+#### Step 4 — `packages/audit` ✅
+- [x] AuditLogger class (SQLite, append-only)
+- [x] Credential redaction in parameters_summary
+- [x] Tests: round-trip, redaction, session filtering (27 tests)
 
-#### Step 5 — `packages/executor`
-- [ ] Hono server :3141 (POST /execute, GET /health, GET /agent-card, GET /tools)
-- [ ] Tool registry (built-in + MCP proxy)
-- [ ] Confirmation flow to host CLI
-- [ ] Docker: filtered read-only mount, data volume
+#### Step 5 — `packages/executor` ✅
+- [x] Hono server :3141 (POST /execute, GET /health, GET /agent-card, GET /tools, POST /confirm/:id)
+- [x] Tool registry (built-in: bash, read_file, write_file, edit_file)
+- [x] Confirmation flow (auto-approve reads, confirm writes/dangerous)
+- [x] Deny-list path filtering (defense in depth) — 12 tests
 
-#### Step 6 — `packages/agent`
-- [ ] Agent loop: reason → manifest → POST executor → observe → repeat
-- [ ] Anthropic SDK with streaming
-- [ ] Tool definitions from executor's GET /tools
+#### Step 6 — `packages/agent` ✅
+- [x] Agent loop: reason → manifest → POST executor → observe → repeat
+- [x] Anthropic SDK with streaming
+- [x] Tool definitions from executor's GET /tools — 21 tests
 
-#### Step 7 — `packages/cli`
-- [ ] sentinel chat, vault, audit, config, init
-- [ ] Docker compose orchestration
-- [ ] Confirmation TUI (@clack/prompts + chalk)
+#### Step 7 — `packages/cli` ✅
+- [x] sentinel chat, vault, audit, config, init
+- [x] In-process executor (local dev, Docker deferred)
+- [x] Confirmation TUI (@clack/prompts + chalk) — 1 test
 
 ### Phase 2: CF Workers Deployment (Future)
 
 Original Waves 1-6 from Hermes Addendum. Requires CF account + moltworker fork. See `sentinel/` directory structure and `docs/sentinel-hermes-addendum.md` for full spec.
+
+#### Research & Claude Chat Migration
+- [ ] **Copy Claude Desktop Sentinel chats** using Chrome extension — design decisions, threat models
+- [ ] **Read Reddit security warning** — https://www.reddit.com/r/ClaudeAI/comments/1qn53gl/warning_i_tried_clawdbot_powered_by_claude/
+- [ ] **Read "Google suspends OpenClaw over token misuse"** — validates credential filtering design
+- [ ] **Review ClawMetry** (Product Hunt) — observability tool, potential audit dashboard integration
+
+#### Intelligent Model Routing with Plano (Post-MVP)
+- [ ] **Integrate [Plano](https://github.com/katanemo/plano) as AI-native proxy** — 4B-param router for model selection (Kimi K2.5 vs Claude Opus 4.6)
+- [ ] **Configure routing rules** — prompt classification criteria by task type
+- [ ] **Wire Plano into Sentinel** — routed requests still pass through policy engine + audit
