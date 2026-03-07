@@ -28,7 +28,13 @@ export function getDefaultPolicy(): PolicyDocument {
 			workspace: { root: "~/.openclaw/workspace", access: "rw" },
 			approval: { ask: "on-miss" },
 		},
-		agents: {},
+		agents: {
+			main: {
+				tools: { allow: ["*"], deny: ["group:network"] },
+				workspace: { root: "~/.openclaw/workspace", access: "rw" },
+				approval: { ask: "on-miss" },
+			},
+		},
 	};
 }
 

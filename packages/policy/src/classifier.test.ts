@@ -10,7 +10,7 @@ function makeManifest(tool: string, parameters: Record<string, unknown> = {}): A
 		tool,
 		parameters,
 		sessionId: "test-session",
-		agentId: "test-agent",
+		agentId: "main",
 	};
 }
 
@@ -29,9 +29,21 @@ function makeManifestWithAgent(
 	};
 }
 
+// Legacy tests use a permissive workspace root so they focus on classification behavior
+const LEGACY_POLICY: PolicyDocument = {
+	...getDefaultPolicy(),
+	agents: {
+		main: {
+			tools: { allow: ["*"], deny: [] },
+			workspace: { root: "/", access: "rw" },
+			approval: { ask: "on-miss" },
+		},
+	},
+};
+
 describe("classify", () => {
 	const config = getDefaultConfig();
-	const policy = getDefaultPolicy();
+	const policy = LEGACY_POLICY;
 
 	describe("builtin tools", () => {
 		it("read_file -> read, auto_approve", () => {
@@ -328,6 +340,38 @@ describe("classify with PolicyDocument", () => {
 			);
 			expect(result.action).toBe("block");
 			expect(result.reason).toContain("workspace");
+		});
+
+		it("blocks bash command referencing paths outside workspace", () => {
+			const result = classify(
+				makeManifestWithAgent("bash", { command: "cat /etc/passwd" }, "work"),
+				TEST_POLICY,
+				config,
+			);
+			expect(result.action).toBe("block");
+			expect(result.reason).toContain("workspace");
+		});
+
+		it("allows bash command with paths inside workspace", () => {
+			const result = classify(
+				makeManifestWithAgent(
+					"bash",
+					{ command: "cat /tmp/sentinel-test-ws/work/file.txt" },
+					"work",
+				),
+				TEST_POLICY,
+				config,
+			);
+			expect(result.action).not.toBe("block");
+		});
+
+		it("allows bash command with no absolute path arguments", () => {
+			const result = classify(
+				makeManifestWithAgent("bash", { command: "ls -la" }, "work"),
+				TEST_POLICY,
+				config,
+			);
+			expect(result.action).not.toBe("block");
 		});
 
 		it("allows read in read-only workspace", () => {

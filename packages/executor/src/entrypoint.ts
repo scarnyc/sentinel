@@ -1,7 +1,6 @@
-import * as path from "node:path";
 import { serve } from "@hono/node-server";
 import { AuditLogger } from "@sentinel/audit";
-import { getDefaultConfig, getDefaultPolicy } from "@sentinel/policy";
+import { getDefaultConfig } from "@sentinel/policy";
 import { loadPolicy } from "./policy-loader.js";
 import { createApp } from "./server.js";
 import { createToolRegistry } from "./tools/index.js";
@@ -10,17 +9,12 @@ const config = getDefaultConfig();
 config.auditLogPath = process.env.SENTINEL_AUDIT_PATH ?? "/app/data/audit.db";
 config.vaultPath = process.env.SENTINEL_VAULT_PATH ?? "/app/data/vault.enc";
 
+// Fail-closed: crash if policy is missing or invalid (no fallback)
 const policyPath = process.env.SENTINEL_POLICY_PATH ?? "./config/policy.json";
-let policy: ReturnType<typeof getDefaultPolicy>;
-try {
-	policy = loadPolicy(policyPath);
-	console.log(
-		`Policy v${policy.version} loaded: ${Object.keys(policy.agents).length} agents, ${Object.keys(policy.toolGroups).length} groups`,
-	);
-} catch {
-	console.warn(`No policy file at ${policyPath}, using default policy`);
-	policy = getDefaultPolicy();
-}
+const policy = loadPolicy(policyPath);
+console.log(
+	`Policy v${policy.version} loaded: ${Object.keys(policy.agents).length} agents, ${Object.keys(policy.toolGroups).length} groups`,
+);
 
 const auditLogger = new AuditLogger(config.auditLogPath);
 const registry = createToolRegistry();

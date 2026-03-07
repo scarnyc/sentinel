@@ -2,8 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AuditLogger } from "@sentinel/audit";
-import { getDefaultPolicy } from "@sentinel/policy";
-import type { ActionManifest, SentinelConfig, ToolResult } from "@sentinel/types";
+import type { ActionManifest, PolicyDocument, SentinelConfig, ToolResult } from "@sentinel/types";
 import type { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./server.js";
@@ -28,6 +27,29 @@ const DEFAULT_CONFIG: SentinelConfig = {
 	llm: { provider: "anthropic", model: "claude-sonnet-4-20250514", maxTokens: 4096 },
 };
 
+function makeTestPolicy(workspaceRoot: string): PolicyDocument {
+	return {
+		version: 1,
+		toolGroups: {
+			fs: ["read_file", "write_file", "edit_file"],
+			runtime: ["bash"],
+			network: ["browser", "fetch", "curl"],
+		},
+		defaults: {
+			tools: { allow: ["*"], deny: ["group:network"] },
+			workspace: { root: workspaceRoot, access: "rw" },
+			approval: { ask: "on-miss" },
+		},
+		agents: {
+			main: {
+				tools: { allow: ["*"], deny: ["group:network"] },
+				workspace: { root: workspaceRoot, access: "rw" },
+				approval: { ask: "on-miss" },
+			},
+		},
+	};
+}
+
 function makeManifest(overrides: Partial<ActionManifest> = {}): ActionManifest {
 	return {
 		id: crypto.randomUUID(),
@@ -35,7 +57,7 @@ function makeManifest(overrides: Partial<ActionManifest> = {}): ActionManifest {
 		tool: "bash",
 		parameters: { command: "echo hello" },
 		sessionId: "test-session",
-		agentId: "test-agent",
+		agentId: "main",
 		...overrides,
 	};
 }
@@ -54,8 +76,7 @@ beforeEach(() => {
 	auditLogger = new AuditLogger(dbPath);
 	registry = createToolRegistry();
 
-	// Create app with auto-approve confirmFn (overridden per-test when needed)
-	app = createApp(DEFAULT_CONFIG, getDefaultPolicy(), auditLogger, registry);
+	app = createApp(DEFAULT_CONFIG, makeTestPolicy(tempDir), auditLogger, registry);
 });
 
 afterEach(() => {
@@ -148,15 +169,10 @@ describe("POST /execute", () => {
 			parameters: { path: targetPath, content: "data" },
 		});
 
-		// We need a separate app that doesn't auto-confirm.
-		// The default confirmFn waits for POST /confirm/:id.
-		// So we send execute, then confirm it.
 		const confirmPromise = postExecute(app, manifest);
 
-		// Give the server a tick to register the pending confirmation
 		await new Promise((r) => setTimeout(r, 50));
 
-		// Confirm it
 		const confirmRes = await app.request(`/confirm/${manifest.id}`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -189,7 +205,7 @@ describe("POST /execute", () => {
 		expect(result.error).toContain("Denied by user");
 	});
 
-	it("blocks denied file paths", async () => {
+	it("blocks file paths outside workspace", async () => {
 		const manifest = makeManifest({
 			tool: "read_file",
 			parameters: { path: "/project/.env" },
@@ -197,6 +213,19 @@ describe("POST /execute", () => {
 		const res = await postExecute(app, manifest);
 		expect(res.status).toBe(422);
 
+		const result = (await res.json()) as ToolResult;
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("workspace");
+	});
+
+	it("blocks deny-listed file within workspace", async () => {
+		const envFile = join(tempDir, ".env");
+		writeFileSync(envFile, "SECRET=value");
+		const manifest = makeManifest({
+			tool: "read_file",
+			parameters: { path: envFile },
+		});
+		const res = await postExecute(app, manifest);
 		const result = (await res.json()) as ToolResult;
 		expect(result.success).toBe(false);
 		expect(result.error).toContain("denied");
@@ -240,7 +269,7 @@ describe("POST /execute", () => {
 		const entry = entries.find((e) => e.manifestId === manifest.id);
 		expect(entry).toBeDefined();
 		// biome-ignore lint/style/noNonNullAssertion: entry verified defined above
-		expect(entry!.result).toBe("failure");
+		expect(entry!.result).toBe("blocked_by_policy");
 	});
 });
 

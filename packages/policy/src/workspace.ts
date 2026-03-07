@@ -26,18 +26,25 @@ export function resolveAgentPath(targetPath: string, workspaceRoot: string): str
 	return path.join(workspaceRoot, targetPath);
 }
 
+function startsWithDir(target: string, root: string): boolean {
+	if (target === root) return true;
+	// Avoid double-separator when root is "/" (filesystem root)
+	const prefix = root.endsWith(path.sep) ? root : root + path.sep;
+	return target.startsWith(prefix);
+}
+
 export function isWithinWorkspace(targetPath: string, workspaceRoot: string): boolean {
 	const resolvedRoot = safeRealpath(workspaceRoot);
 	if (!resolvedRoot) {
 		// Workspace root doesn't exist on disk — fall back to normalized path comparison
 		const normalRoot = path.resolve(workspaceRoot);
 		const normalTarget = path.resolve(targetPath);
-		return normalTarget === normalRoot || normalTarget.startsWith(normalRoot + path.sep);
+		return startsWithDir(normalTarget, normalRoot);
 	}
 
 	const resolvedTarget = safeRealpath(targetPath);
 	if (resolvedTarget) {
-		return resolvedTarget === resolvedRoot || resolvedTarget.startsWith(resolvedRoot + path.sep);
+		return startsWithDir(resolvedTarget, resolvedRoot);
 	}
 
 	// Path doesn't exist yet — check nearest existing ancestor
@@ -49,7 +56,7 @@ export function isWithinWorkspace(targetPath: string, workspaceRoot: string): bo
 			const remainder = path.relative(parent, path.resolve(targetPath));
 			if (remainder.startsWith("..")) return false;
 			const full = path.join(resolvedParent, remainder);
-			return full === resolvedRoot || full.startsWith(resolvedRoot + path.sep);
+			return startsWithDir(full, resolvedRoot);
 		}
 		current = parent;
 	}
@@ -80,4 +87,60 @@ function safeRealpath(p: string): string | null {
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * Extract absolute paths from a bash command string.
+ * Used to enforce workspace containment on bash commands,
+ * since paths are embedded in the command rather than in named parameters.
+ */
+export function extractPathsFromCommand(command: string): string[] {
+	const paths: string[] = [];
+	// Match argument tokens that look like absolute paths (start with /)
+	// Skip the first token (the command binary) — binaries like /usr/bin/rg
+	// are always outside workspace but aren't file targets.
+	const tokens = tokenizeCommand(command);
+	for (let i = 1; i < tokens.length; i++) {
+		const token = tokens[i];
+		// Skip flags (e.g., -rf, --verbose)
+		if (token.startsWith("-")) continue;
+		if (token.startsWith("/") && !token.startsWith("//")) {
+			paths.push(token);
+		}
+	}
+	return paths;
+}
+
+/**
+ * Simple shell tokenizer that splits on whitespace while respecting quotes.
+ * Does not handle all shell edge cases, but catches the common patterns.
+ */
+function tokenizeCommand(command: string): string[] {
+	const tokens: string[] = [];
+	let current = "";
+	let inSingle = false;
+	let inDouble = false;
+
+	for (let i = 0; i < command.length; i++) {
+		const ch = command[i];
+
+		if (ch === "'" && !inDouble) {
+			inSingle = !inSingle;
+		} else if (ch === '"' && !inSingle) {
+			inDouble = !inDouble;
+		} else if (/\s/.test(ch) && !inSingle && !inDouble) {
+			if (current.length > 0) {
+				tokens.push(current);
+				current = "";
+			}
+		} else {
+			current += ch;
+		}
+	}
+
+	if (current.length > 0) {
+		tokens.push(current);
+	}
+
+	return tokens;
 }

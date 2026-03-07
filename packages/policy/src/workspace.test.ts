@@ -2,7 +2,12 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { checkWorkspaceAccess, isWithinWorkspace, resolveAgentPath } from "./workspace.js";
+import {
+	checkWorkspaceAccess,
+	extractPathsFromCommand,
+	isWithinWorkspace,
+	resolveAgentPath,
+} from "./workspace.js";
 
 describe("resolveAgentPath", () => {
 	it("expands ~ to workspace root, not $HOME", () => {
@@ -115,5 +120,47 @@ describe("checkWorkspaceAccess", () => {
 		const result = checkWorkspaceAccess("/etc/passwd", tmpDir, "rw", "read");
 		expect(result.allowed).toBe(false);
 		expect(result.reason).toContain("outside workspace");
+	});
+});
+
+describe("isWithinWorkspace with root /", () => {
+	it("allows any absolute path when workspace is /", () => {
+		expect(isWithinWorkspace("/app/.env", "/")).toBe(true);
+		expect(isWithinWorkspace("/etc/passwd", "/")).toBe(true);
+		expect(isWithinWorkspace("/", "/")).toBe(true);
+	});
+});
+
+describe("extractPathsFromCommand", () => {
+	it("extracts absolute path arguments from command", () => {
+		expect(extractPathsFromCommand("cat /etc/passwd")).toEqual(["/etc/passwd"]);
+	});
+
+	it("skips the command binary (first token)", () => {
+		expect(extractPathsFromCommand("/usr/bin/cat /etc/passwd")).toEqual(["/etc/passwd"]);
+	});
+
+	it("skips flags", () => {
+		expect(extractPathsFromCommand("rm -rf /home/user/data")).toEqual(["/home/user/data"]);
+	});
+
+	it("extracts multiple paths", () => {
+		expect(extractPathsFromCommand("cp /src/file.txt /dst/file.txt")).toEqual([
+			"/src/file.txt",
+			"/dst/file.txt",
+		]);
+	});
+
+	it("returns empty for commands with no absolute paths", () => {
+		expect(extractPathsFromCommand("ls -la")).toEqual([]);
+		expect(extractPathsFromCommand("echo hello")).toEqual([]);
+	});
+
+	it("handles quoted paths", () => {
+		expect(extractPathsFromCommand('cat "/etc/passwd"')).toEqual(["/etc/passwd"]);
+	});
+
+	it("returns empty for empty command", () => {
+		expect(extractPathsFromCommand("")).toEqual([]);
 	});
 });

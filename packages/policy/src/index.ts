@@ -5,6 +5,7 @@ export { expandGroups, validateGroups } from "./groups.js";
 export { getDefaultConfig, getDefaultPolicy } from "./rules.js";
 export {
 	checkWorkspaceAccess,
+	extractPathsFromCommand,
 	isWithinWorkspace,
 	PATH_PARAMS,
 	resolveAgentPath,

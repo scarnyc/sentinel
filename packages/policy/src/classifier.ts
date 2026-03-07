@@ -13,6 +13,7 @@ import { classifyBashCommand } from "./bash-parser.js";
 import { expandGroups } from "./groups.js";
 import {
 	checkWorkspaceAccess,
+	extractPathsFromCommand,
 	isWithinWorkspace,
 	PATH_PARAMS,
 	resolveAgentPath,
@@ -136,21 +137,14 @@ export function classify(
 ): PolicyDecision {
 	const { tool, parameters, agentId } = manifest;
 
-	// Step 1: Resolve agent policy
+	// Step 1: Resolve agent policy — unknown agents are always blocked
 	const agentPolicy = policy.agents[agentId];
-	if (!agentPolicy && Object.keys(policy.agents).length > 0) {
-		// Policy has agents defined but this agentId isn't registered
+	if (!agentPolicy) {
 		return {
 			action: "block",
 			category: "dangerous",
 			reason: `Unknown agent: ${agentId}`,
 		};
-	}
-
-	// If no agents defined in policy (empty agents map), skip policy gates
-	// and fall through to legacy classification (backward-compatible)
-	if (!agentPolicy) {
-		return classifyLegacy(manifest, config);
 	}
 
 	// Step 2-3: Tool gate (deny-wins)
@@ -192,6 +186,22 @@ export function classify(
 		}
 	}
 
+	// Step 4b: Bash command path extraction — check absolute paths in command string
+	if (tool === "bash") {
+		const command = typeof parameters.command === "string" ? parameters.command : "";
+		const paths = extractPathsFromCommand(command);
+		for (const cmdPath of paths) {
+			const resolvedPath = resolveAgentPath(cmdPath, agentPolicy.workspace.root);
+			if (!isWithinWorkspace(resolvedPath, agentPolicy.workspace.root)) {
+				return {
+					action: "block",
+					category: "dangerous",
+					reason: `Bash command references path outside workspace for agent '${agentId}': ${cmdPath}`,
+				};
+			}
+		}
+	}
+
 	// Step 5: Existing classification (bash parser, category lookup)
 	const legacyDecision = classifyLegacy(manifest, config);
 
@@ -215,8 +225,12 @@ export function classify(
 		};
 	}
 
-	// "on-miss": allowlist matching only applies to bash commands.
-	// For non-bash tools, defer to legacy classification (reads auto-approve, writes confirm).
+	// "on-miss": for all tools, if legacy says auto_approve, honor it.
+	// For bash commands that legacy confirms (writes/dangerous), check allowlist.
+	if (legacyDecision.action === "auto_approve") {
+		return legacyDecision;
+	}
+
 	if (tool === "bash") {
 		const command = typeof parameters.command === "string" ? parameters.command : undefined;
 		const approvalResult = resolveApproval(command, approvalConfig);

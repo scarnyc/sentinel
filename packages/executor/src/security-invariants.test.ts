@@ -2,8 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AuditLogger } from "@sentinel/audit";
-import { getDefaultPolicy } from "@sentinel/policy";
-import type { ActionManifest, ToolResult } from "@sentinel/types";
+import type { ActionManifest, PolicyDocument, ToolResult } from "@sentinel/types";
 import type { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./server.js";
@@ -33,6 +32,29 @@ const DEFAULT_CONFIG = {
 	llm: { provider: "anthropic" as const, model: "claude-sonnet-4-20250514", maxTokens: 4096 },
 };
 
+function makeTestPolicy(workspaceRoot: string): PolicyDocument {
+	return {
+		version: 1,
+		toolGroups: {
+			fs: ["read_file", "write_file", "edit_file"],
+			runtime: ["bash"],
+			network: ["browser", "fetch", "curl"],
+		},
+		defaults: {
+			tools: { allow: ["*"], deny: ["group:network"] },
+			workspace: { root: workspaceRoot, access: "rw" },
+			approval: { ask: "on-miss" },
+		},
+		agents: {
+			main: {
+				tools: { allow: ["*"], deny: ["group:network"] },
+				workspace: { root: workspaceRoot, access: "rw" },
+				approval: { ask: "on-miss" },
+			},
+		},
+	};
+}
+
 function makeManifest(overrides: Partial<ActionManifest> = {}): ActionManifest {
 	return {
 		id: crypto.randomUUID(),
@@ -40,7 +62,7 @@ function makeManifest(overrides: Partial<ActionManifest> = {}): ActionManifest {
 		tool: "bash",
 		parameters: { command: "echo hello" },
 		sessionId: "test-session",
-		agentId: "test-agent",
+		agentId: "main",
 		...overrides,
 	};
 }
@@ -58,7 +80,7 @@ beforeEach(() => {
 	const dbPath = join(tempDir, "audit.db");
 	auditLogger = new AuditLogger(dbPath);
 	registry = createToolRegistry();
-	app = createApp(DEFAULT_CONFIG, getDefaultPolicy(), auditLogger, registry);
+	app = createApp(DEFAULT_CONFIG, makeTestPolicy(tempDir), auditLogger, registry);
 });
 
 afterEach(() => {
@@ -116,10 +138,12 @@ describe("Security Invariant #2: All tool calls audited", () => {
 });
 
 describe("Security Invariant #3: Blocked tool categories enforced", () => {
-	it("denies read_file for .env paths", async () => {
+	it("blocks read_file for .env paths within workspace", async () => {
+		const envFile = join(tempDir, ".env");
+		writeFileSync(envFile, "SECRET=value");
 		const manifest = makeManifest({
 			tool: "read_file",
-			parameters: { path: "/app/.env" },
+			parameters: { path: envFile },
 		});
 		const res = await postExecute(app, manifest);
 		const result = (await res.json()) as ToolResult;
@@ -127,21 +151,44 @@ describe("Security Invariant #3: Blocked tool categories enforced", () => {
 		expect(result.error).toContain("denied");
 	});
 
-	it("denies read_file for .pem paths", async () => {
+	it("blocks read_file for .pem paths within workspace", async () => {
+		const pemFile = join(tempDir, "server.pem");
+		writeFileSync(pemFile, "-----BEGIN CERTIFICATE-----");
 		const manifest = makeManifest({
 			tool: "read_file",
-			parameters: { path: "/app/server.pem" },
+			parameters: { path: pemFile },
 		});
 		const res = await postExecute(app, manifest);
 		const result = (await res.json()) as ToolResult;
 		expect(result.success).toBe(false);
 		expect(result.error).toContain("denied");
+	});
+
+	it("blocks read_file for paths outside workspace", async () => {
+		const manifest = makeManifest({
+			tool: "read_file",
+			parameters: { path: "/etc/passwd" },
+		});
+		const res = await postExecute(app, manifest);
+		const result = (await res.json()) as ToolResult;
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("workspace");
+	});
+
+	it("blocks bash commands referencing paths outside workspace", async () => {
+		const manifest = makeManifest({
+			tool: "bash",
+			parameters: { command: "cat /etc/passwd" },
+		});
+		const res = await postExecute(app, manifest);
+		const result = (await res.json()) as ToolResult;
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("workspace");
 	});
 
 	it("denies bash commands reading sensitive files with head/tail", async () => {
-		// head and tail are classified as "read" by the policy engine,
-		// so they auto-approve and reach the bash deny-list check.
-		const commands = ["head -1 .env", "tail .env.local", "head /app/secret.pem", "tail vault.enc"];
+		// Relative paths (no /) are checked by the deny-list in bash handler
+		const commands = ["head -1 .env", "tail .env.local"];
 		for (const command of commands) {
 			const manifest = makeManifest({
 				tool: "bash",
@@ -157,19 +204,12 @@ describe("Security Invariant #3: Blocked tool categories enforced", () => {
 
 describe("Security Invariant #6: Policy changes require restart", () => {
 	it("config is captured at app creation, not re-read per request", () => {
-		// The createApp function takes config as a parameter at startup.
-		// There is no hot-reload mechanism. Mutating the config object after
-		// creation should not affect already-captured closures that don't
-		// re-read from an external source.
 		const config = { ...DEFAULT_CONFIG, autoApproveReadOps: true };
-		const testApp = createApp(config, getDefaultPolicy(), auditLogger, registry);
+		const testApp = createApp(config, makeTestPolicy(tempDir), auditLogger, registry);
 
-		// Mutate after creation — this simulates a "post-startup policy change"
+		// Mutate after creation — simulates "post-startup policy change"
 		config.autoApproveReadOps = false;
 
-		// The app should still use the original value (true) because
-		// config is passed by reference but the app behavior depends on
-		// the classify() function which reads from the config each time.
 		// This test documents the current behavior — config IS re-read
 		// per request since it's passed by reference. True restart-only
 		// enforcement requires deep-cloning config at startup.
