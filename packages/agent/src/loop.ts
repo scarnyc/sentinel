@@ -11,6 +11,7 @@ export interface AgentLoopConfig {
 	apiKey: string;
 	model?: string;
 	sessionId: string;
+	agentId: string;
 }
 
 export async function agentLoop(config: AgentLoopConfig): Promise<void> {
@@ -94,7 +95,7 @@ export async function agentLoop(config: AgentLoopConfig): Promise<void> {
 				if (pendingToolUses.length > 0) {
 					process.stdout.write("\n");
 					for (const tu of pendingToolUses) {
-						const manifest = buildManifest(tu.name, tu.input, config.sessionId);
+						const manifest = buildManifest(tu.name, tu.input, config.sessionId, config.agentId);
 						const result = await executor.execute(manifest);
 						context.addToolResult(tu.id, result);
 					}

@@ -13,5 +13,7 @@ export const AuditEntrySchema = z.object({
 	result: z.enum(["success", "failure", "denied_by_user", "blocked_by_policy"]),
 	duration_ms: z.number().nonnegative().optional(),
 	sessionId: z.string().min(1),
+	agentId: z.string().min(1),
+	policyVersion: z.number().int().positive(),
 });
 export type AuditEntry = z.infer<typeof AuditEntrySchema>;

@@ -73,6 +73,7 @@ export async function chatCommand(config: SentinelConfig, _dataDir: string): Pro
 			apiKey,
 			model: config.llm.model,
 			sessionId,
+			agentId: "main",
 		});
 	} catch (error) {
 		if (error instanceof Error && error.message.includes("stdin closed")) {

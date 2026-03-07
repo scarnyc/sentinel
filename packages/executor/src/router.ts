@@ -46,6 +46,8 @@ export async function handleExecute(
 		timestamp: new Date().toISOString(),
 		manifestId: manifest.id,
 		sessionId: manifest.sessionId,
+		agentId: manifest.agentId,
+		policyVersion: 1, // hardcoded until policy loading in Task 6
 		tool: manifest.tool,
 		category: decision.category,
 		decision: decision.action,

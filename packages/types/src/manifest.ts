@@ -15,6 +15,7 @@ export const ActionManifestSchema = z.object({
 	parameters: z.record(z.unknown()),
 	category: ActionCategorySchema.optional(),
 	sessionId: z.string().min(1),
+	agentId: z.string().min(1),
 });
 export type ActionManifest = z.infer<typeof ActionManifestSchema>;
 

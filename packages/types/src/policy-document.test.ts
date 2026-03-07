@@ -63,7 +63,7 @@ describe("PolicyDocumentSchema", () => {
 	});
 
 	it("accepts agent without optional fields (inherits from defaults)", () => {
-		const policy = structuredClone(VALID_POLICY);
+		const policy = structuredClone(VALID_POLICY) as Record<string, any>;
 		policy.agents.minimal = {
 			tools: { allow: ["read"] },
 			workspace: { root: "~/minimal", access: "ro" },

@@ -39,6 +39,7 @@ function makeManifest(overrides: Partial<ActionManifest> = {}): ActionManifest {
 		tool: "bash",
 		parameters: { command: "echo hello" },
 		sessionId: "test-session",
+		agentId: "test-agent",
 		...overrides,
 	};
 }
