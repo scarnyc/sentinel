@@ -6,8 +6,12 @@ services:
     ports:
       - "127.0.0.1:3141:3141"
     volumes:
-      - ./data:/app/data
+      # Workspace is read-only — executor cannot modify source code
       - .:/workspace:ro
+      # Data directory is writable — audit logs, vault, runtime state
+      - ./data:/app/data:rw
+    environment:
+      - SENTINEL_DOCKER=true
     networks:
       - sentinel-net
     healthcheck:

@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import type { ToolResult } from "@sentinel/types";
 import { isDeniedPath } from "./deny-list.js";
 
@@ -21,6 +21,20 @@ export async function executeWriteFile(
 			error: "Access denied: file path is restricted",
 			duration_ms: Date.now() - start,
 		};
+	}
+
+	// Defense-in-depth: restrict writes to allowed prefix in Docker
+	if (process.env.SENTINEL_DOCKER === "true") {
+		const resolved = resolve(params.path);
+		const ALLOWED_WRITE_PREFIX = "/app/data/";
+		if (!resolved.startsWith(ALLOWED_WRITE_PREFIX)) {
+			return {
+				manifestId,
+				success: false,
+				error: "Access denied: writes restricted to /app/data/ in container mode",
+				duration_ms: Date.now() - start,
+			};
+		}
 	}
 
 	try {
