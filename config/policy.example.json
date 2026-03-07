@@ -1,57 +1,57 @@
 {
-  "version": 1,
-  "toolGroups": {
-    "fs": ["read_file", "write_file", "edit_file"],
-    "runtime": ["bash"],
-    "network": ["browser", "fetch", "curl"],
-    "messaging": ["slack", "discord", "telegram", "whatsapp"],
-    "automation": ["sessions_spawn", "sessions_send", "gateway"]
-  },
-  "defaults": {
-    "tools": {
-      "allow": ["*"],
-      "deny": ["group:network", "group:messaging"]
-    },
-    "workspace": {
-      "root": "~/.openclaw/workspace",
-      "access": "rw"
-    },
-    "approval": {
-      "ask": "on-miss"
-    }
-  },
-  "agents": {
-    "main": {
-      "tools": {
-        "allow": ["group:fs", "group:runtime"],
-        "deny": []
-      },
-      "workspace": {
-        "root": "~/Code",
-        "access": "rw"
-      },
-      "approval": {
-        "ask": "on-miss",
-        "allowlist": [
-          { "pattern": "/opt/homebrew/bin/rg" },
-          { "pattern": "/opt/homebrew/bin/node *" },
-          { "pattern": "/usr/bin/git *" },
-          { "pattern": "/opt/homebrew/bin/pnpm *" }
-        ]
-      }
-    },
-    "family": {
-      "tools": {
-        "allow": ["read_file", "group:runtime"],
-        "deny": ["group:network"]
-      },
-      "workspace": {
-        "root": "~/Family",
-        "access": "ro"
-      },
-      "approval": {
-        "ask": "always"
-      }
-    }
-  }
+	"version": 1,
+	"toolGroups": {
+		"fs": ["read_file", "write_file", "edit_file"],
+		"runtime": ["bash"],
+		"network": ["browser", "fetch", "curl"],
+		"messaging": ["slack", "discord", "telegram", "whatsapp"],
+		"automation": ["sessions_spawn", "sessions_send", "gateway"]
+	},
+	"defaults": {
+		"tools": {
+			"allow": ["*"],
+			"deny": ["group:network", "group:messaging"]
+		},
+		"workspace": {
+			"root": "~/.openclaw/workspace",
+			"access": "rw"
+		},
+		"approval": {
+			"ask": "on-miss"
+		}
+	},
+	"agents": {
+		"main": {
+			"tools": {
+				"allow": ["group:fs", "group:runtime"],
+				"deny": []
+			},
+			"workspace": {
+				"root": "~/Code",
+				"access": "rw"
+			},
+			"approval": {
+				"ask": "on-miss",
+				"allowlist": [
+					{ "pattern": "/opt/homebrew/bin/rg" },
+					{ "pattern": "/opt/homebrew/bin/node *" },
+					{ "pattern": "/usr/bin/git *" },
+					{ "pattern": "/opt/homebrew/bin/pnpm *" }
+				]
+			}
+		},
+		"family": {
+			"tools": {
+				"allow": ["read_file", "group:runtime"],
+				"deny": ["group:network"]
+			},
+			"workspace": {
+				"root": "~/Family",
+				"access": "ro"
+			},
+			"approval": {
+				"ask": "always"
+			}
+		}
+	}
 }

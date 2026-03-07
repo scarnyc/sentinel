@@ -2,8 +2,8 @@ import * as path from "node:path";
 import { serve } from "@hono/node-server";
 import { AuditLogger } from "@sentinel/audit";
 import { getDefaultConfig, getDefaultPolicy } from "@sentinel/policy";
-import { createApp } from "./server.js";
 import { loadPolicy } from "./policy-loader.js";
+import { createApp } from "./server.js";
 import { createToolRegistry } from "./tools/index.js";
 
 const config = getDefaultConfig();

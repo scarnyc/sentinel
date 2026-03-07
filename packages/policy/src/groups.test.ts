@@ -25,7 +25,12 @@ describe("expandGroups", () => {
 	});
 
 	it("deduplicates expanded results", () => {
-		expect(expandGroups(["read", "group:fs"], GROUPS)).toEqual(["read", "write", "edit", "apply_patch"]);
+		expect(expandGroups(["read", "group:fs"], GROUPS)).toEqual([
+			"read",
+			"write",
+			"edit",
+			"apply_patch",
+		]);
 	});
 
 	it("returns empty array for empty input", () => {

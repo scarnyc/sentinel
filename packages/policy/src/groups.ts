@@ -1,7 +1,4 @@
-export function expandGroups(
-	tools: string[],
-	toolGroups: Record<string, string[]>,
-): string[] {
+export function expandGroups(tools: string[], toolGroups: Record<string, string[]>): string[] {
 	const result: string[] = [];
 	const seen = new Set<string>();
 

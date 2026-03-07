@@ -47,7 +47,9 @@ describe("isWithinWorkspace", () => {
 	});
 
 	it("blocks ../ traversal escaping workspace", () => {
-		expect(isWithinWorkspace(path.join(tmpDir, "sub", "..", "..", "etc", "passwd"), tmpDir)).toBe(false);
+		expect(isWithinWorkspace(path.join(tmpDir, "sub", "..", "..", "etc", "passwd"), tmpDir)).toBe(
+			false,
+		);
 	});
 
 	it("blocks symlink pointing outside workspace", () => {
@@ -89,13 +91,23 @@ describe("checkWorkspaceAccess", () => {
 	});
 
 	it("blocks write in ro workspace", () => {
-		const result = checkWorkspaceAccess(path.join(tmpDir, "sub", "file.txt"), tmpDir, "ro", "write");
+		const result = checkWorkspaceAccess(
+			path.join(tmpDir, "sub", "file.txt"),
+			tmpDir,
+			"ro",
+			"write",
+		);
 		expect(result.allowed).toBe(false);
 		expect(result.reason).toContain("read-only");
 	});
 
 	it("allows write in rw workspace", () => {
-		const result = checkWorkspaceAccess(path.join(tmpDir, "sub", "file.txt"), tmpDir, "rw", "write");
+		const result = checkWorkspaceAccess(
+			path.join(tmpDir, "sub", "file.txt"),
+			tmpDir,
+			"rw",
+			"write",
+		);
 		expect(result.allowed).toBe(true);
 	});
 

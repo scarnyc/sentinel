@@ -11,7 +11,12 @@ import type {
 import { resolveApproval } from "./approval.js";
 import { classifyBashCommand } from "./bash-parser.js";
 import { expandGroups } from "./groups.js";
-import { PATH_PARAMS, checkWorkspaceAccess, isWithinWorkspace, resolveAgentPath } from "./workspace.js";
+import {
+	checkWorkspaceAccess,
+	isWithinWorkspace,
+	PATH_PARAMS,
+	resolveAgentPath,
+} from "./workspace.js";
 
 function findClassification(
 	tool: string,
@@ -203,7 +208,11 @@ export function classify(
 		return { action: "confirm", category: legacyDecision.category, reason: legacyDecision.reason };
 	}
 	if (approvalConfig.ask === "never") {
-		return { action: "auto_approve", category: legacyDecision.category, reason: legacyDecision.reason };
+		return {
+			action: "auto_approve",
+			category: legacyDecision.category,
+			reason: legacyDecision.reason,
+		};
 	}
 
 	// "on-miss": allowlist matching only applies to bash commands.
@@ -211,7 +220,11 @@ export function classify(
 	if (tool === "bash") {
 		const command = typeof parameters.command === "string" ? parameters.command : undefined;
 		const approvalResult = resolveApproval(command, approvalConfig);
-		return { action: approvalResult, category: legacyDecision.category, reason: legacyDecision.reason };
+		return {
+			action: approvalResult,
+			category: legacyDecision.category,
+			reason: legacyDecision.reason,
+		};
 	}
 
 	return legacyDecision;

@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AuditLogger } from "@sentinel/audit";
@@ -93,20 +93,12 @@ afterEach(() => {
 
 describe("Policy Integration: full flow through executor", () => {
 	it("agent 'work' auto-approves bash with rg allowlist match", async () => {
-		const manifest = makeManifest(
-			"bash",
-			{ command: "/opt/homebrew/bin/rg --version" },
-			"work",
-		);
+		const manifest = makeManifest("bash", { command: "/opt/homebrew/bin/rg --version" }, "work");
 		// rg matches allowlist pattern "/opt/homebrew/bin/rg" with wildcard-like behavior
 		// But the pattern is exact: "/opt/homebrew/bin/rg" without " *", so "--version" won't match
 		// Actually the allowlist pattern is exact match only: "/opt/homebrew/bin/rg"
 		// This command has args, so it won't match. Let's use exact match:
-		const exactManifest = makeManifest(
-			"bash",
-			{ command: "/opt/homebrew/bin/rg" },
-			"work",
-		);
+		const exactManifest = makeManifest("bash", { command: "/opt/homebrew/bin/rg" }, "work");
 		const res = await postExecute(app, exactManifest);
 		const result = (await res.json()) as ToolResult;
 		// Even though rg doesn't exist, the policy says auto_approve

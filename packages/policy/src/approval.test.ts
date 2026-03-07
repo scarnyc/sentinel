@@ -1,6 +1,6 @@
+import type { ApprovalConfig } from "@sentinel/types";
 import { describe, expect, it } from "vitest";
 import { resolveApproval } from "./approval.js";
-import type { ApprovalConfig } from "@sentinel/types";
 
 describe("resolveApproval", () => {
 	it("auto_approve when command matches allowlist pattern exactly", () => {

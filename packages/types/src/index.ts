@@ -37,6 +37,10 @@ export {
 	ToolResultSchema,
 } from "./manifest.js";
 export {
+	type PolicyDecision,
+	PolicyDecisionSchema,
+} from "./policy.js";
+export {
 	type AgentPolicy,
 	AgentPolicySchema,
 	type ApprovalConfig,
@@ -51,7 +55,3 @@ export {
 	type WorkspaceScope,
 	WorkspaceScopeSchema,
 } from "./policy-document.js";
-export {
-	type PolicyDecision,
-	PolicyDecisionSchema,
-} from "./policy.js";

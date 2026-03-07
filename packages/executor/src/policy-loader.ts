@@ -1,14 +1,16 @@
 import * as fs from "node:fs";
+import { expandGroups, validateGroups } from "@sentinel/policy";
 import type { PolicyDocument } from "@sentinel/types";
 import { PolicyDocumentSchema } from "@sentinel/types";
-import { expandGroups, validateGroups } from "@sentinel/policy";
 
 export function loadPolicy(policyPath: string): Readonly<PolicyDocument> {
 	let raw: string;
 	try {
 		raw = fs.readFileSync(policyPath, "utf-8");
 	} catch {
-		throw new Error(`Policy file not found: ${policyPath}. Executor cannot start without a policy.`);
+		throw new Error(
+			`Policy file not found: ${policyPath}. Executor cannot start without a policy.`,
+		);
 	}
 
 	let json: unknown;
