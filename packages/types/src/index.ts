@@ -37,6 +37,21 @@ export {
 	ToolResultSchema,
 } from "./manifest.js";
 export {
+	type AgentPolicy,
+	AgentPolicySchema,
+	type ApprovalConfig,
+	ApprovalConfigSchema,
+	type ApprovalPattern,
+	ApprovalPatternSchema,
+	type DefaultPolicy,
+	DefaultPolicySchema,
+	type PolicyDocument,
+	PolicyDocumentSchema,
+	ToolPolicySchema,
+	type WorkspaceScope,
+	WorkspaceScopeSchema,
+} from "./policy-document.js";
+export {
 	type PolicyDecision,
 	PolicyDecisionSchema,
 } from "./policy.js";
