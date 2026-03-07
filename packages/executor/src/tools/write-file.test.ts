@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -63,6 +63,25 @@ describe("executeWriteFile", () => {
 		it("blocks writes to /etc/passwd", async () => {
 			const result = await executeWriteFile({ path: "/etc/passwd", content: "evil" }, "test-id");
 			expect(result.success).toBe(false);
+		});
+
+		it("blocks symlink-based path traversal", async () => {
+			// Create a symlink inside a fake /app/data/ that points outside
+			const fakeAppData = join(tempDir, "app", "data");
+			const outsideDir = join(tempDir, "outside");
+			const { mkdirSync } = await import("node:fs");
+			mkdirSync(fakeAppData, { recursive: true });
+			mkdirSync(outsideDir, { recursive: true });
+
+			// Symlink: /app/data/escape -> /outside/
+			const symlinkPath = join(fakeAppData, "escape");
+			symlinkSync(outsideDir, symlinkPath);
+
+			// The symlink target resolves outside /app/data/ via realpath
+			const targetFile = join(symlinkPath, "escaped.txt");
+			const result = await executeWriteFile({ path: targetFile, content: "evil" }, "test-id");
+			expect(result.success).toBe(false);
+			expect(result.error).toContain("/app/data/");
 		});
 	});
 

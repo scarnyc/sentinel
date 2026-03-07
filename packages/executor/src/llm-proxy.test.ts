@@ -64,7 +64,7 @@ describe("LLM Proxy", () => {
 		});
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as { error: string };
-		expect(body.error).toContain("Missing ANTHROPIC_API_KEY");
+		expect(body.error).toContain("configuration error");
 		expect(fetchSpy).not.toHaveBeenCalled();
 	});
 
@@ -157,6 +157,30 @@ describe("LLM Proxy", () => {
 		expect(headers.get("Host")).toBeNull();
 		expect(headers.get("Connection")).toBeNull();
 		expect(headers.get("x-llm-host")).toBeNull();
+	});
+
+	it("strips agent-supplied auth headers before forwarding", async () => {
+		const mockResponse = new Response("{}", { status: 200 });
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(mockResponse);
+
+		await app.request("/proxy/llm/v1/messages", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Authorization: "Bearer agent-injected-key",
+				"x-api-key": "agent-injected-anthropic-key",
+				"x-goog-api-key": "agent-injected-gemini-key",
+			},
+			body: JSON.stringify({ model: "claude-sonnet-4-20250514" }),
+		});
+
+		expect(fetchSpy).toHaveBeenCalledOnce();
+		const headers = fetchSpy.mock.calls[0][1]?.headers as Headers;
+		// Executor injects its own Anthropic key, not the agent's values
+		expect(headers.get("x-api-key")).toBe("sk-ant-test-key");
+		// Agent-supplied auth headers must not survive
+		expect(headers.get("Authorization")).toBeNull();
+		expect(headers.get("x-goog-api-key")).toBeNull();
 	});
 
 	it("returns 502 on fetch error", async () => {

@@ -30,8 +30,8 @@ const HOST_AUTH_HEADERS: Record<string, { envVar: string; headerName: string; pr
  * LLM proxy handler. Forwards requests to allowlisted LLM API hosts,
  * injecting the appropriate API key from executor environment.
  *
- * Agent sends: POST /proxy/llm with JSON body containing `target` (full URL)
- * and the original request body/headers.
+ * Agent sends: POST /proxy/llm/<downstream-path> with an optional `x-llm-host`
+ * header to select the provider (default: api.anthropic.com).
  *
  * This is designed to work with the Anthropic SDK's baseURL parameter.
  * When the agent sets `baseURL=http://executor:3141/proxy/llm`,
@@ -66,7 +66,10 @@ export async function handleLlmProxy(c: Context): Promise<Response> {
 			lower === "host" ||
 			lower === "connection" ||
 			lower === "x-llm-host" ||
-			lower === "content-length"
+			lower === "content-length" ||
+			lower === "authorization" ||
+			lower === "x-api-key" ||
+			lower === "x-goog-api-key"
 		) {
 			continue;
 		}
@@ -78,7 +81,7 @@ export async function handleLlmProxy(c: Context): Promise<Response> {
 	if (authConfig) {
 		const apiKey = process.env[authConfig.envVar];
 		if (!apiKey) {
-			return c.json({ error: `Missing ${authConfig.envVar} in executor environment` }, 500);
+			return c.json({ error: "LLM proxy configuration error" }, 500);
 		}
 		const value = authConfig.prefix ? `${authConfig.prefix}${apiKey}` : apiKey;
 		forwardHeaders.set(authConfig.headerName, value);
