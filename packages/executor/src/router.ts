@@ -1,6 +1,6 @@
 import type { AuditLogger } from "@sentinel/audit";
 import { redactCredentials } from "@sentinel/audit";
-import { classify } from "@sentinel/policy";
+import { classify, type LoopGuard, type RateLimiter } from "@sentinel/policy";
 import type {
 	ActionManifest,
 	AuditEntry,
@@ -11,6 +11,7 @@ import type {
 import { ActionManifestSchema } from "@sentinel/types";
 import { filterCredentials } from "./credential-filter.js";
 import { moderate } from "./moderation/scanner.js";
+import { scrubPII } from "./pii-scrubber.js";
 import type { ToolRegistry } from "./tools/registry.js";
 
 export type ConfirmFn = (manifest: ActionManifest, decision: PolicyDecision) => Promise<boolean>;
@@ -24,12 +25,18 @@ function summarizeParams(params: Record<string, unknown>): string {
 	return parts.join(", ");
 }
 
+export interface PipelineGuards {
+	rateLimiter?: RateLimiter;
+	loopGuard?: LoopGuard;
+}
+
 export async function handleExecute(
 	rawManifest: unknown,
 	config: SentinelConfig,
 	auditLogger: AuditLogger,
 	registry: ToolRegistry,
 	confirmFn: ConfirmFn,
+	guards?: PipelineGuards,
 ): Promise<ToolResult> {
 	// 1. Validate manifest
 	const parsed = ActionManifestSchema.safeParse(rawManifest);
@@ -38,7 +45,33 @@ export async function handleExecute(
 	}
 	const manifest = parsed.data;
 
-	// 2. Classify via policy engine
+	// 2. Rate limit check (Phase 1)
+	if (guards?.rateLimiter) {
+		const rateResult = guards.rateLimiter.check(manifest.agentId);
+		if (!rateResult.allowed) {
+			return {
+				manifestId: manifest.id,
+				success: false,
+				error: `Rate limit exceeded. Retry after ${Math.ceil(rateResult.retryAfter ?? 0)}ms`,
+				duration_ms: 0,
+			};
+		}
+	}
+
+	// 3. Loop guard check (Phase 1)
+	if (guards?.loopGuard) {
+		const loopResult = guards.loopGuard.check(manifest.agentId, manifest.tool, manifest.parameters);
+		if (loopResult.action === "block") {
+			return {
+				manifestId: manifest.id,
+				success: false,
+				error: loopResult.reason ?? "Loop detected — action blocked",
+				duration_ms: 0,
+			};
+		}
+	}
+
+	// 4. Classify via policy engine
 	const decision = classify(manifest, config);
 
 	// 3. Decide
@@ -121,9 +154,12 @@ export async function handleExecute(
 	const rawResult = await handler(manifest.parameters, manifest.id);
 
 	// 6. Filter credentials from tool output before it reaches the agent
-	const result = filterCredentials(rawResult);
+	const credFiltered = filterCredentials(rawResult);
 
-	// 7. Post-execute moderation: scan tool output
+	// 7. PII scrub (Phase 1)
+	const result = scrubPII(credFiltered);
+
+	// 8. Post-execute moderation: scan tool output
 	if (result.output) {
 		const postModeration = moderate(result.output);
 		if (postModeration.blocked) {

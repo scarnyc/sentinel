@@ -1,5 +1,6 @@
 import type { ToolResult } from "@sentinel/types";
 import { execa, execaCommand } from "execa";
+import { truncateBashOutput } from "../output-truncation.js";
 
 async function detectFirejail(): Promise<boolean> {
 	try {
@@ -88,6 +89,29 @@ const DENIED_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
 	// DNS exfiltration: nslookup/dig anywhere, host in command position only
 	{ pattern: /\b(nslookup|dig)\b/, reason: "DNS lookup commands denied (exfiltration risk)" },
 	{ pattern: /(?:^|[|;&]\s*)host\s/, reason: "DNS lookup commands denied (exfiltration risk)" },
+	// Fork bomb
+	{ pattern: /:\(\)\s*\{.*\|.*&\s*\}\s*;?\s*:/, reason: "Fork bomb denied" },
+	// Disk destruction via dd targeting block devices
+	{
+		pattern: /\bdd\b.*\bof=\/dev\/[sh]d[a-z]/,
+		reason: "Disk destruction command denied",
+	},
+	{
+		pattern: /\bdd\b.*\bof=\/dev\/nvme/,
+		reason: "Disk destruction command denied",
+	},
+	// Filesystem formatting
+	{ pattern: /\bmkfs\b/, reason: "Filesystem format command denied" },
+	// Process kill: init (PID 1) or all processes (PID -1)
+	{
+		pattern: /\bkill\b.*(-9|-KILL|-SIGKILL)\s+(-1|1)\b/,
+		reason: "Process kill denied (init/all processes)",
+	},
+	// Recursive chmod 777 on root
+	{
+		pattern: /\bchmod\b.*(-R|--recursive).*777\s+\/(\s|$)/,
+		reason: "Recursive permission change on root denied",
+	},
 ];
 
 function isDeniedBashCommand(command: string): string | null {
@@ -163,12 +187,13 @@ export async function executeBash(params: BashParams, manifestId: string): Promi
 					shell: true,
 				});
 
-		const output = [result.stdout, result.stderr].filter(Boolean).join("\n");
+		const rawOutput = [result.stdout, result.stderr].filter(Boolean).join("\n");
+		const output = rawOutput ? truncateBashOutput(rawOutput) : undefined;
 
 		return {
 			manifestId,
 			success: result.exitCode === 0,
-			output: output || undefined,
+			output,
 			error: result.exitCode !== 0 ? `Exit code: ${result.exitCode}` : undefined,
 			duration_ms: Date.now() - start,
 		};
