@@ -1,4 +1,5 @@
 import type { Context } from "hono";
+import { checkSsrf, SsrfError } from "./ssrf-guard.js";
 
 const ALLOWED_LLM_HOSTS = new Set([
 	"api.anthropic.com",
@@ -87,6 +88,19 @@ export async function handleLlmProxy(c: Context): Promise<Response> {
 		}
 		const value = authConfig.prefix ? `${authConfig.prefix}${apiKey}` : apiKey;
 		forwardHeaders.set(authConfig.headerName, value);
+	}
+
+	// SENTINEL: SSRF guard — verify target URL doesn't resolve to private IPs (Phase 1)
+	try {
+		await checkSsrf(targetUrl);
+	} catch (error) {
+		if (error instanceof SsrfError) {
+			return c.json({ error: "Blocked: SSRF protection" }, 403);
+		}
+		console.error(
+			`[llm-proxy] SSRF check failed unexpectedly: ${error instanceof Error ? error.message : "Unknown"}`,
+		);
+		return c.json({ error: "SSRF check failed" }, 500);
 	}
 
 	try {

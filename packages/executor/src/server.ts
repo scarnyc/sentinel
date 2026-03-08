@@ -1,9 +1,17 @@
 import type { AuditLogger } from "@sentinel/audit";
+import { LoopGuard, RateLimiter } from "@sentinel/policy";
 import type { ActionManifest, AgentCard, PolicyDecision, SentinelConfig } from "@sentinel/types";
 import { Hono } from "hono";
 import { z } from "zod";
+import { createAuthMiddleware } from "./auth-middleware.js";
 import { handleLlmProxy } from "./llm-proxy.js";
-import { type ConfirmFn, handleExecute, ManifestValidationError } from "./router.js";
+import { requestIdMiddleware } from "./request-id.js";
+import {
+	type ConfirmFn,
+	handleExecute,
+	ManifestValidationError,
+	type PipelineGuards,
+} from "./router.js";
 import type { ToolRegistry } from "./tools/registry.js";
 
 const ConfirmBodySchema = z.object({
@@ -37,6 +45,12 @@ export function createApp(
 	const app = new Hono();
 	const pendingConfirmations = new Map<string, PendingConfirmation>();
 
+	// SENTINEL: Phase 1 pipeline guards — rate limiter and loop guard
+	const guards: PipelineGuards = {
+		rateLimiter: new RateLimiter({ rate: 60, period: 60_000 }), // 60 req/min per agent
+		loopGuard: new LoopGuard(),
+	};
+
 	const confirmFn: ConfirmFn = (manifest, decision) => {
 		return new Promise<boolean>((resolve) => {
 			pendingConfirmations.set(manifest.id, { manifest, decision, resolve });
@@ -44,8 +58,26 @@ export function createApp(
 		});
 	};
 
+	// SENTINEL: request UUID for structured correlation logging (Phase 1)
+	app.use("*", requestIdMiddleware);
+
 	app.get("/health", (c) => {
 		return c.json({ status: "ok", version: "0.1.0" });
+	});
+
+	// Auth middleware for all routes except /health
+	// SENTINEL: constant-time bearer token auth (Phase 1 hardening)
+	const authMiddleware = createAuthMiddleware(config.authToken);
+	if (!config.authToken) {
+		console.warn(
+			"[sentinel] WARNING: No authToken configured — executor running without authentication",
+		);
+	}
+	app.use("*", async (c, next) => {
+		if (c.req.path === "/health") {
+			return next();
+		}
+		return authMiddleware(c, next);
 	});
 
 	app.get("/agent-card", (c) => {
@@ -72,13 +104,16 @@ export function createApp(
 	app.post("/execute", async (c) => {
 		try {
 			const body = await c.req.json();
-			const result = await handleExecute(body, config, auditLogger, registry, confirmFn);
+			const result = await handleExecute(body, config, auditLogger, registry, confirmFn, guards);
 			return c.json(result, result.success ? 200 : 422);
 		} catch (error) {
 			if (error instanceof ManifestValidationError) {
 				return c.json({ error: error.message }, 400);
 			}
-			return c.json({ error: error instanceof Error ? error.message : "Internal error" }, 500);
+			console.error(
+				`[execute] Unhandled error: ${error instanceof Error ? error.message : "Unknown"}`,
+			);
+			return c.json({ error: "Internal execution error" }, 500);
 		}
 	});
 
