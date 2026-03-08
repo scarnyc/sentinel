@@ -47,6 +47,15 @@ const DENIED_FILE_PATTERNS = [
 	// Block curl/wget file exfiltration of sensitive files
 	/\bcurl\b.*@.*\.(env|pem|key)\b/,
 	/\bcurl\b.*-d\b.*\.(env|pem|key)\b/,
+	// Destructive rm: any rm with recursive flag targeting root/home
+	/\brm\b.*-[a-zA-Z]*r.*\s+\//,
+	/\brm\b.*-[a-zA-Z]*r.*\s+~/,
+	/\brm\b.*-[a-zA-Z]*r.*\s+\$HOME/,
+	/\brm\b.*--recursive.*[/~]/,
+	// Mail commands (data exfiltration)
+	/\b(mail|mailx|sendmail|mutt|postfix)\b/,
+	// DNS exfiltration
+	/\b(nslookup|dig|host)\b/,
 ];
 
 function isDeniedBashCommand(command: string): string | null {
