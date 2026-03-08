@@ -116,3 +116,41 @@ describe("redactCredentials", () => {
 		expect(redactCredentials(input)).toBe("sk-short");
 	});
 });
+
+describe("redactCredentials: PII scrubbing", () => {
+	it("redacts SSN", () => {
+		const input = "SSN: 123-45-6789";
+		const result = redactCredentials(input);
+		expect(result).not.toContain("123-45-6789");
+		expect(result).toContain("[PII_REDACTED]");
+	});
+
+	it("redacts email addresses", () => {
+		const input = "contact: user@example.com";
+		const result = redactCredentials(input);
+		expect(result).not.toContain("user@example.com");
+		expect(result).toContain("[PII_REDACTED]");
+	});
+
+	it("does NOT redact small dollar amounts", () => {
+		expect(redactCredentials("cost: $5")).toContain("$5");
+		expect(redactCredentials("price: $99")).toContain("$99");
+	});
+
+	it("redacts salary amounts", () => {
+		const result = redactCredentials("salary: $150,000");
+		expect(result).not.toContain("$150,000");
+		expect(result).toContain("[PII_REDACTED]");
+	});
+
+	it("does NOT redact GitHub repo URLs", () => {
+		expect(redactCredentials("https://github.com/nodejs/node")).toContain("github.com/nodejs/node");
+	});
+
+	it("redacts LinkedIn URLs", () => {
+		const input = "https://linkedin.com/in/jane-doe";
+		const result = redactCredentials(input);
+		expect(result).not.toContain("linkedin.com/in/jane-doe");
+		expect(result).toContain("[PII_REDACTED]");
+	});
+});

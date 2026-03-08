@@ -1,7 +1,8 @@
-import { mkdir, realpath, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import type { ToolResult } from "@sentinel/types";
 import { isDeniedPath } from "./deny-list.js";
+import { isPathAllowed } from "./path-guard.js";
 
 interface WriteFileParams {
 	path: string;
@@ -11,6 +12,7 @@ interface WriteFileParams {
 export async function executeWriteFile(
 	params: WriteFileParams,
 	manifestId: string,
+	allowedRoots?: readonly string[],
 ): Promise<ToolResult> {
 	const start = Date.now();
 
@@ -23,12 +25,21 @@ export async function executeWriteFile(
 		};
 	}
 
+	// Path whitelist check (runs before Docker-specific prefix check below)
+	const guard = await isPathAllowed(params.path, allowedRoots);
+	if (!guard.allowed) {
+		return {
+			manifestId,
+			success: false,
+			error: `Access denied: ${guard.reason}`,
+			duration_ms: Date.now() - start,
+		};
+	}
+
 	// Defense-in-depth: restrict writes to allowed prefix in Docker
 	if (process.env.SENTINEL_DOCKER === "true") {
 		const ALLOWED_WRITE_PREFIX = "/app/data/";
-		// Use realpath to resolve symlinks; fall back to lexical resolve for new paths
-		const resolved = await realpath(resolve(params.path)).catch(() => resolve(params.path));
-		if (!resolved.startsWith(ALLOWED_WRITE_PREFIX)) {
+		if (!guard.resolved.startsWith(ALLOWED_WRITE_PREFIX)) {
 			return {
 				manifestId,
 				success: false,
@@ -36,10 +47,9 @@ export async function executeWriteFile(
 				duration_ms: Date.now() - start,
 			};
 		}
-		// Use resolved path for actual write to prevent symlink-based bypasses
 		try {
-			await mkdir(dirname(resolved), { recursive: true });
-			await writeFile(resolved, params.content, "utf-8");
+			await mkdir(dirname(guard.resolved), { recursive: true });
+			await writeFile(guard.resolved, params.content, "utf-8");
 			return {
 				manifestId,
 				success: true,
@@ -57,8 +67,8 @@ export async function executeWriteFile(
 	}
 
 	try {
-		await mkdir(dirname(params.path), { recursive: true });
-		await writeFile(params.path, params.content, "utf-8");
+		await mkdir(dirname(guard.resolved), { recursive: true });
+		await writeFile(guard.resolved, params.content, "utf-8");
 
 		return {
 			manifestId,

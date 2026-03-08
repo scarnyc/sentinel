@@ -75,6 +75,14 @@ describe("classifyBashCommand", () => {
 			["cat ~/.ssh/id_rsa", "dangerous"],
 			["cat ~/.env", "dangerous"],
 			["cat ~/.aws/credentials", "dangerous"],
+			["mail user@example.com", "dangerous"],
+			["mailx -s subject user@example.com", "dangerous"],
+			["sendmail -t", "dangerous"],
+			["mutt -s subject user@example.com", "dangerous"],
+			["postfix start", "dangerous"],
+			["nslookup example.com", "dangerous"],
+			["dig example.com", "dangerous"],
+			["host example.com", "dangerous"],
 		])("%s -> %s", (command, expected) => {
 			expect(classifyBashCommand(command)).toBe(expected);
 		});

@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import type { ToolResult } from "@sentinel/types";
 import { isDeniedPath } from "./deny-list.js";
+import { isPathAllowed } from "./path-guard.js";
 
 interface EditFileParams {
 	path: string;
@@ -11,6 +12,7 @@ interface EditFileParams {
 export async function executeEditFile(
 	params: EditFileParams,
 	manifestId: string,
+	allowedRoots?: readonly string[],
 ): Promise<ToolResult> {
 	const start = Date.now();
 
@@ -23,8 +25,18 @@ export async function executeEditFile(
 		};
 	}
 
+	const guard = await isPathAllowed(params.path, allowedRoots);
+	if (!guard.allowed) {
+		return {
+			manifestId,
+			success: false,
+			error: `Access denied: ${guard.reason}`,
+			duration_ms: Date.now() - start,
+		};
+	}
+
 	try {
-		const content = await readFile(params.path, "utf-8");
+		const content = await readFile(guard.resolved, "utf-8");
 
 		const occurrences = content.split(params.old_string).length - 1;
 		if (occurrences === 0) {
@@ -45,7 +57,7 @@ export async function executeEditFile(
 		}
 
 		const updated = content.replace(params.old_string, params.new_string);
-		await writeFile(params.path, updated, "utf-8");
+		await writeFile(guard.resolved, updated, "utf-8");
 
 		return {
 			manifestId,

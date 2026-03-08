@@ -27,7 +27,7 @@ const EditFileParamsSchema = z.object({
 	new_string: z.string(),
 });
 
-export function createToolRegistry(): ToolRegistry {
+export function createToolRegistry(allowedRoots?: readonly string[]): ToolRegistry {
 	const registry = new ToolRegistry();
 
 	registry.registerBuiltin("bash", (params, manifestId) => {
@@ -37,17 +37,17 @@ export function createToolRegistry(): ToolRegistry {
 
 	registry.registerBuiltin("read_file", (params, manifestId) => {
 		const parsed = ReadFileParamsSchema.parse(params);
-		return executeReadFile(parsed, manifestId);
+		return executeReadFile(parsed, manifestId, allowedRoots);
 	});
 
 	registry.registerBuiltin("write_file", (params, manifestId) => {
 		const parsed = WriteFileParamsSchema.parse(params);
-		return executeWriteFile(parsed, manifestId);
+		return executeWriteFile(parsed, manifestId, allowedRoots);
 	});
 
 	registry.registerBuiltin("edit_file", (params, manifestId) => {
 		const parsed = EditFileParamsSchema.parse(params);
-		return executeEditFile(parsed, manifestId);
+		return executeEditFile(parsed, manifestId, allowedRoots);
 	});
 
 	return registry;

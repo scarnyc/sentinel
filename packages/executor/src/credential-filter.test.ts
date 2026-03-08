@@ -101,3 +101,111 @@ describe("filterCredentials", () => {
 		expect(filtered.duration_ms).toBe(0);
 	});
 });
+
+describe("filterCredentials: PII scrubbing", () => {
+	it("strips SSN from output", () => {
+		const result = makeResult("SSN: 123-45-6789");
+		const filtered = filterCredentials(result);
+		expect(filtered.output).not.toContain("123-45-6789");
+		expect(filtered.output).toContain("[PII_REDACTED]");
+	});
+
+	it("strips phone number (XXX) XXX-XXXX from output", () => {
+		const result = makeResult("Call (555) 123-4567");
+		const filtered = filterCredentials(result);
+		expect(filtered.output).not.toContain("(555) 123-4567");
+		expect(filtered.output).toContain("[PII_REDACTED]");
+	});
+
+	it("strips phone number XXX-XXX-XXXX from output", () => {
+		const result = makeResult("Phone: 555-123-4567");
+		const filtered = filterCredentials(result);
+		expect(filtered.output).not.toContain("555-123-4567");
+		expect(filtered.output).toContain("[PII_REDACTED]");
+	});
+
+	it("strips international phone +1XXXXXXXXXX from output", () => {
+		const result = makeResult("Mobile: +15551234567");
+		const filtered = filterCredentials(result);
+		expect(filtered.output).not.toContain("+15551234567");
+		expect(filtered.output).toContain("[PII_REDACTED]");
+	});
+
+	it("strips email address from output", () => {
+		const result = makeResult("Email: john.doe@example.com");
+		const filtered = filterCredentials(result);
+		expect(filtered.output).not.toContain("john.doe@example.com");
+		expect(filtered.output).toContain("[PII_REDACTED]");
+	});
+
+	it("strips salary from output", () => {
+		const result = makeResult("Expected: $150,000");
+		const filtered = filterCredentials(result);
+		expect(filtered.output).not.toContain("$150,000");
+		expect(filtered.output).toContain("[PII_REDACTED]");
+	});
+
+	it("strips salary shorthand $85K from output", () => {
+		const result = makeResult("Range: $85K-$120K");
+		const filtered = filterCredentials(result);
+		expect(filtered.output).not.toContain("$85K");
+		expect(filtered.output).toContain("[PII_REDACTED]");
+	});
+
+	it("strips LinkedIn URL from output", () => {
+		const result = makeResult("Profile: https://www.linkedin.com/in/johndoe/");
+		const filtered = filterCredentials(result);
+		expect(filtered.output).not.toContain("linkedin.com/in/johndoe");
+		expect(filtered.output).toContain("[PII_REDACTED]");
+	});
+
+	it("strips GitHub URL from output", () => {
+		const result = makeResult("Code: https://github.com/johndoe");
+		const filtered = filterCredentials(result);
+		expect(filtered.output).not.toContain("github.com/johndoe");
+		expect(filtered.output).toContain("[PII_REDACTED]");
+	});
+
+	it("passes through plain text unchanged", () => {
+		const result = makeResult("hello world, no PII here");
+		const filtered = filterCredentials(result);
+		expect(filtered.output).toBe("hello world, no PII here");
+	});
+
+	it("does NOT redact small dollar amounts ($5, $10)", () => {
+		const result = makeResult("Price: $5 and $10 and $99");
+		const filtered = filterCredentials(result);
+		expect(filtered.output).toContain("$5");
+		expect(filtered.output).toContain("$10");
+		expect(filtered.output).toContain("$99");
+	});
+
+	it("redacts salary-level amounts ($150,000)", () => {
+		const result = makeResult("Expected: $150,000.00");
+		const filtered = filterCredentials(result);
+		expect(filtered.output).not.toContain("$150,000");
+		expect(filtered.output).toContain("[PII_REDACTED]");
+	});
+
+	it("does NOT redact GitHub repo URLs", () => {
+		const result = makeResult("See https://github.com/nodejs/node for details");
+		const filtered = filterCredentials(result);
+		expect(filtered.output).toContain("github.com/nodejs/node");
+	});
+
+	it("redacts GitHub profile URLs (no repo path)", () => {
+		const result = makeResult("Profile: https://github.com/johndoe");
+		const filtered = filterCredentials(result);
+		expect(filtered.output).not.toContain("github.com/johndoe");
+		expect(filtered.output).toContain("[PII_REDACTED]");
+	});
+
+	it("strips both credentials and PII in same string", () => {
+		const result = makeResult("key: sk-ant-abc123-testkey456789012345 phone: 555-123-4567");
+		const filtered = filterCredentials(result);
+		expect(filtered.output).not.toContain("sk-ant-");
+		expect(filtered.output).not.toContain("555-123-4567");
+		expect(filtered.output).toContain("[REDACTED]");
+		expect(filtered.output).toContain("[PII_REDACTED]");
+	});
+});

@@ -40,6 +40,10 @@ services:
 networks:
   sentinel-internal:
     driver: bridge
+    # internal: true blocks all internet access for connected containers.
+    # network_mode: "none" was evaluated but deferred — it disables Docker DNS,
+    # requiring Unix domain socket transport (Node.js fetch() doesn't natively support UDS).
+    # internal: true is sufficient for MVP: agent cannot reach the internet.
     internal: true
   sentinel-external:
     driver: bridge

@@ -67,6 +67,14 @@ const DANGEROUS_COMMANDS = new Set([
 	"env",
 	"eval",
 	"exec",
+	"mail",
+	"mailx",
+	"sendmail",
+	"mutt",
+	"postfix",
+	"nslookup",
+	"dig",
+	"host",
 ]);
 
 const SENSITIVE_PATH_PATTERNS = [
