@@ -42,6 +42,7 @@ export const SentinelConfigSchema = z.object({
 	auditLogPath: z.string().min(1),
 	vaultPath: z.string().min(1),
 	mcpServers: z.array(McpServerConfigSchema).optional(),
+	allowedRoots: z.array(z.string().min(1)).optional(),
 	llm: z.object({
 		provider: z.literal("anthropic"),
 		model: z.string().min(1),
