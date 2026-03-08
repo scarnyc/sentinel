@@ -116,3 +116,26 @@ describe("redactCredentials", () => {
 		expect(redactCredentials(input)).toBe("sk-short");
 	});
 });
+
+describe("redactCredentials: PII scrubbing", () => {
+	it("redacts SSN", () => {
+		const input = "SSN: 123-45-6789";
+		const result = redactCredentials(input);
+		expect(result).not.toContain("123-45-6789");
+		expect(result).toContain("[PII_REDACTED]");
+	});
+
+	it("redacts email addresses", () => {
+		const input = "contact: user@example.com";
+		const result = redactCredentials(input);
+		expect(result).not.toContain("user@example.com");
+		expect(result).toContain("[PII_REDACTED]");
+	});
+
+	it("redacts LinkedIn URLs", () => {
+		const input = "https://linkedin.com/in/jane-doe";
+		const result = redactCredentials(input);
+		expect(result).not.toContain("linkedin.com/in/jane-doe");
+		expect(result).toContain("[PII_REDACTED]");
+	});
+});

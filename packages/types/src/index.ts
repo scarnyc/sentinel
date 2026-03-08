@@ -27,7 +27,10 @@ export {
 } from "./config.js";
 export {
 	CREDENTIAL_PATTERNS,
+	PII_PATTERNS,
+	redactAll,
 	redactAllCredentials,
+	redactPII,
 } from "./credential-patterns.js";
 export {
 	type ActionCategory,
