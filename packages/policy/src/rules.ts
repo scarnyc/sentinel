@@ -1,4 +1,5 @@
-import type { SentinelConfig, ToolClassification } from "@sentinel/types";
+import type { ToolClassification } from "@sentinel/types";
+import { type SentinelConfig, SentinelConfigSchema } from "@sentinel/types";
 
 const DEFAULT_CLASSIFICATIONS: ToolClassification[] = [
 	{ tool: "read_file", defaultCategory: "read" },
@@ -29,4 +30,16 @@ export function getDefaultConfig(): SentinelConfig {
 			maxTokens: 8192,
 		},
 	};
+}
+
+/**
+ * Validate config against Zod schema and enforce business rules.
+ * Crashes with a clear error if config is invalid — fail-fast at startup.
+ */
+export function validateConfig(config: unknown): SentinelConfig {
+	const parsed = SentinelConfigSchema.parse(config);
+	if (parsed.classifications.length === 0) {
+		throw new Error("FATAL: Policy requires at least one tool classification");
+	}
+	return parsed;
 }

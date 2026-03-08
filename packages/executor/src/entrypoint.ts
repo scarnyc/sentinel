@@ -1,16 +1,17 @@
 import { serve } from "@hono/node-server";
 import { AuditLogger } from "@sentinel/audit";
-import { getDefaultConfig } from "@sentinel/policy";
+import { getDefaultConfig, validateConfig } from "@sentinel/policy";
 import { createApp } from "./server.js";
 import { createToolRegistry } from "./tools/index.js";
 
 const mutableConfig = getDefaultConfig();
 mutableConfig.auditLogPath = process.env.SENTINEL_AUDIT_PATH ?? "/app/data/audit.db";
 mutableConfig.vaultPath = process.env.SENTINEL_VAULT_PATH ?? "/app/data/vault.enc";
-const config = Object.freeze(structuredClone(mutableConfig));
+const validated = validateConfig(mutableConfig);
+const config = Object.freeze(structuredClone(validated));
 
 const auditLogger = new AuditLogger(config.auditLogPath);
-const registry = createToolRegistry();
+const registry = createToolRegistry(config.allowedRoots);
 const app = createApp(config, auditLogger, registry);
 
 const port = config.executor.port;
