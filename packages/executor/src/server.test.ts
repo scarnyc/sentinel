@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AuditLogger } from "@sentinel/audit";
@@ -48,7 +48,10 @@ async function postExecute(app: Hono, manifest: ActionManifest) {
 }
 
 beforeEach(() => {
-	tempDir = mkdtempSync(join(tmpdir(), "sentinel-exec-test-"));
+	// Use realpathSync to resolve macOS /var -> /private/var symlink
+	tempDir = realpathSync(mkdtempSync(join(tmpdir(), "sentinel-exec-test-")));
+	// Allow tmpdir paths so file-based tool tests work with cwd-default path guard
+	process.env.SENTINEL_ALLOWED_ROOTS = tempDir;
 	const dbPath = join(tempDir, "audit.db");
 	auditLogger = new AuditLogger(dbPath);
 	registry = createToolRegistry();
@@ -60,6 +63,7 @@ beforeEach(() => {
 afterEach(() => {
 	auditLogger.close();
 	rmSync(tempDir, { recursive: true, force: true });
+	delete process.env.SENTINEL_ALLOWED_ROOTS;
 });
 
 describe("GET /health", () => {
@@ -251,5 +255,47 @@ describe("POST /confirm/:manifestId", () => {
 			body: JSON.stringify({ approved: true }),
 		});
 		expect(res.status).toBe(404);
+	});
+});
+
+describe("GET /pending-confirmations", () => {
+	it("returns empty array when no pending", async () => {
+		const res = await app.request("/pending-confirmations");
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as Array<unknown>;
+		expect(body).toEqual([]);
+	});
+
+	it("returns pending confirmation after execute request", async () => {
+		const targetPath = join(tempDir, "pending-test.txt");
+		const manifest = makeManifest({
+			tool: "write_file",
+			parameters: { path: targetPath, content: "data" },
+		});
+
+		// Start execute (it will block waiting for confirmation)
+		const executePromise = postExecute(app, manifest);
+		await new Promise((r) => setTimeout(r, 50));
+
+		// Check pending
+		const res = await app.request("/pending-confirmations");
+		expect(res.status).toBe(200);
+		const pending = (await res.json()) as Array<{
+			manifestId: string;
+			tool: string;
+			category: string;
+		}>;
+		expect(pending.length).toBe(1);
+		expect(pending[0].manifestId).toBe(manifest.id);
+		expect(pending[0].tool).toBe("write_file");
+		expect(pending[0].category).toBe("write");
+
+		// Clean up: approve so execute resolves
+		await app.request(`/confirm/${manifest.id}`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ approved: true }),
+		});
+		await executePromise;
 	});
 });

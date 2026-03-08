@@ -118,6 +118,7 @@ function classifySingleCommand(command: string): ActionCategory {
 		/^ruby\s+-e\b/,
 		/^perl\s+-e\b/,
 		/^lua\s+-e\b/,
+		/^(sh|bash|zsh|dash|ksh)\s+-c\b/,
 	];
 
 	for (const pattern of INTERPRETER_EXEC_PATTERNS) {

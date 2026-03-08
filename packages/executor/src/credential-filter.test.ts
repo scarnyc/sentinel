@@ -209,3 +209,27 @@ describe("filterCredentials: PII scrubbing", () => {
 		expect(filtered.output).toContain("[PII_REDACTED]");
 	});
 });
+
+describe("filterCredentials: false-positive regression", () => {
+	it("does NOT redact git SHA output", () => {
+		const result = makeResult("commit abc123def456789abc123def456789abc123def456789a");
+		const filtered = filterCredentials(result);
+		expect(filtered.output).toBe("commit abc123def456789abc123def456789abc123def456789a");
+	});
+
+	it("does NOT redact build hashes", () => {
+		const result = makeResult("hash: ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij0123456789");
+		const filtered = filterCredentials(result);
+		expect(filtered.output).toBe("hash: ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij0123456789");
+	});
+
+	it("does NOT redact base64 body content", () => {
+		const result = makeResult(
+			"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAA",
+		);
+		const filtered = filterCredentials(result);
+		expect(filtered.output).toBe(
+			"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAA",
+		);
+	});
+});

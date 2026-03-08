@@ -65,10 +65,10 @@ describe("redactCredentials", () => {
 		expect(result).toContain("[REDACTED]");
 	});
 
-	it("redacts long base64-like strings (40+ chars)", () => {
+	it("passes through generic base64 strings (no false positives)", () => {
 		const base64 = "A".repeat(50);
 		const input = `data: ${base64} end`;
-		expect(redactCredentials(input)).toBe("data: [REDACTED] end");
+		expect(redactCredentials(input)).toBe(input);
 	});
 
 	it("leaves normal text unchanged", () => {

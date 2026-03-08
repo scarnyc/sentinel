@@ -29,8 +29,6 @@ const CREDENTIAL_PATTERNS: readonly RegExp[] = [
 	/Bearer\s+[A-Za-z0-9_\-.~+/]+=*/g,
 	// Database connection strings
 	/(?:postgres|mysql|mongodb(?:\+srv)?):\/\/[^\s]+/g,
-	// Generic long base64-like strings (40+ chars)
-	/[A-Za-z0-9+/=]{40,}/g,
 ];
 
 const REDACTED = "[REDACTED]";

@@ -1,4 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { mkdir, open } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { ToolResult } from "@sentinel/types";
 import { isDeniedPath } from "./deny-list.js";
@@ -47,40 +48,43 @@ export async function executeWriteFile(
 				duration_ms: Date.now() - start,
 			};
 		}
-		try {
-			await mkdir(dirname(guard.resolved), { recursive: true });
-			await writeFile(guard.resolved, params.content, "utf-8");
-			return {
-				manifestId,
-				success: true,
-				output: `Written ${params.content.length} bytes to ${params.path}`,
-				duration_ms: Date.now() - start,
-			};
-		} catch (error) {
-			return {
-				manifestId,
-				success: false,
-				error: error instanceof Error ? error.message : "Unknown error",
-				duration_ms: Date.now() - start,
-			};
-		}
 	}
 
+	// SENTINEL: TOCTOU mitigation — O_NOFOLLOW rejects symlinks atomically at open()
+	// Uses params.path (user-supplied) not guard.resolved, because realpath() already
+	// resolved the symlink — opening guard.resolved would bypass the symlink check.
 	try {
 		await mkdir(dirname(guard.resolved), { recursive: true });
-		await writeFile(guard.resolved, params.content, "utf-8");
-
+		const fd = await open(
+			params.path,
+			constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
+			0o644,
+		);
+		try {
+			await fd.writeFile(params.content, "utf-8");
+		} finally {
+			await fd.close();
+		}
 		return {
 			manifestId,
 			success: true,
 			output: `Written ${params.content.length} bytes to ${params.path}`,
 			duration_ms: Date.now() - start,
 		};
-	} catch (error) {
+	} catch (err: unknown) {
+		const code = (err as NodeJS.ErrnoException).code;
+		if (code === "ELOOP" || code === "EMLINK") {
+			return {
+				manifestId,
+				success: false,
+				error: "Access denied: cannot write through symlink (TOCTOU mitigation)",
+				duration_ms: Date.now() - start,
+			};
+		}
 		return {
 			manifestId,
 			success: false,
-			error: error instanceof Error ? error.message : "Unknown error",
+			error: err instanceof Error ? err.message : "Unknown error",
 			duration_ms: Date.now() - start,
 		};
 	}

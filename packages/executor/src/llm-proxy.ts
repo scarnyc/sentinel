@@ -38,6 +38,8 @@ const HOST_AUTH_HEADERS: Record<string, { envVar: string; headerName: string; pr
  * the SDK sends requests to `/proxy/llm/v1/messages` etc.
  * We extract the path and forward to the real Anthropic API.
  */
+// NOTE: API keys from process.env are V8 immutable strings — cannot be zeroed.
+// Vault-based Buffer keys (zeroable) deferred to Phase 1.
 export async function handleLlmProxy(c: Context): Promise<Response> {
 	// Extract the downstream path (everything after /proxy/llm)
 	const url = new URL(c.req.url);
@@ -101,9 +103,11 @@ export async function handleLlmProxy(c: Context): Promise<Response> {
 			headers: upstreamResponse.headers,
 		});
 	} catch (error) {
-		return c.json(
-			{ error: `Proxy error: ${error instanceof Error ? error.message : "Unknown"}` },
-			502,
+		// Log details server-side but return generic message to untrusted agent
+		// to avoid leaking internal network topology (IPs, DNS, ports)
+		console.error(
+			`[llm-proxy] Upstream request failed: ${error instanceof Error ? error.message : "Unknown"}`,
 		);
+		return c.json({ error: "LLM proxy upstream error" }, 502);
 	}
 }

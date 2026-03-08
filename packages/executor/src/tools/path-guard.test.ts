@@ -15,14 +15,18 @@ afterEach(() => {
 });
 
 describe("isPathAllowed", () => {
-	it("allows any path when allowedRoots is undefined", async () => {
+	it("allows any path when allowedRoots is undefined (Docker mode)", async () => {
+		process.env.SENTINEL_DOCKER = "true";
 		const result = await isPathAllowed("/etc/passwd", undefined);
 		expect(result.allowed).toBe(true);
+		delete process.env.SENTINEL_DOCKER;
 	});
 
-	it("allows any path when allowedRoots is empty", async () => {
+	it("allows any path when allowedRoots is empty (Docker mode)", async () => {
+		process.env.SENTINEL_DOCKER = "true";
 		const result = await isPathAllowed("/etc/passwd", []);
 		expect(result.allowed).toBe(true);
+		delete process.env.SENTINEL_DOCKER;
 	});
 
 	it("allows path within an allowed root", async () => {
@@ -88,5 +92,62 @@ describe("isPathAllowed", () => {
 		if (!result.allowed) {
 			expect(result.reason).toContain("Cannot resolve real path");
 		}
+	});
+});
+
+describe("SENTINEL_ALLOWED_ROOTS env var", () => {
+	afterEach(() => {
+		delete process.env.SENTINEL_ALLOWED_ROOTS;
+	});
+
+	it("uses env var when allowedRoots is undefined", async () => {
+		process.env.SENTINEL_ALLOWED_ROOTS = tempDir;
+		const testFile = join(tempDir, "test.txt");
+		writeFileSync(testFile, "hello");
+		const result = await isPathAllowed(testFile, undefined);
+		expect(result.allowed).toBe(true);
+	});
+
+	it("uses env var to deny paths outside roots", async () => {
+		process.env.SENTINEL_ALLOWED_ROOTS = tempDir;
+		const result = await isPathAllowed("/etc/passwd", undefined);
+		expect(result.allowed).toBe(false);
+	});
+
+	it("parses comma-separated roots from env var", async () => {
+		const secondRoot = mkdtempSync(join(tmpdir(), "sentinel-root3-"));
+		process.env.SENTINEL_ALLOWED_ROOTS = `${tempDir},${secondRoot}`;
+		const testFile = join(secondRoot, "test.txt");
+		writeFileSync(testFile, "hello");
+		const result = await isPathAllowed(testFile, undefined);
+		expect(result.allowed).toBe(true);
+		rmSync(secondRoot, { recursive: true, force: true });
+	});
+
+	it("explicit allowedRoots override env var", async () => {
+		process.env.SENTINEL_ALLOWED_ROOTS = "/some/other/path";
+		const testFile = join(tempDir, "test.txt");
+		writeFileSync(testFile, "hello");
+		const result = await isPathAllowed(testFile, [tempDir]);
+		expect(result.allowed).toBe(true);
+	});
+});
+
+describe("cwd default in local mode", () => {
+	afterEach(() => {
+		delete process.env.SENTINEL_ALLOWED_ROOTS;
+		delete process.env.SENTINEL_DOCKER;
+	});
+
+	it("defaults to cwd when no allowedRoots and no env var", async () => {
+		const result = await isPathAllowed("/etc/passwd", undefined);
+		expect(result.allowed).toBe(false);
+	});
+
+	it("allows files within cwd by default", async () => {
+		const cwd = process.cwd();
+		const testPath = join(cwd, "package.json");
+		const result = await isPathAllowed(testPath, undefined);
+		expect(result.allowed).toBe(true);
 	});
 });

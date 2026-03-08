@@ -7,6 +7,7 @@ import { createApp, createToolRegistry } from "@sentinel/executor";
 import { validateConfig } from "@sentinel/policy";
 import type { SentinelConfig } from "@sentinel/types";
 import chalk from "chalk";
+import { startConfirmationPoller } from "../confirmation-tui.js";
 
 export async function chatCommand(config: SentinelConfig, _dataDir: string): Promise<void> {
 	// Validate config (same gate as entrypoint)
@@ -21,24 +22,36 @@ export async function chatCommand(config: SentinelConfig, _dataDir: string): Pro
 		return;
 	}
 
-	// Open vault
+	// Open vault — distinguish file-not-found / permission errors from wrong password
 	let vault: CredentialVault;
 	try {
 		vault = await CredentialVault.open(config.vaultPath, password);
-	} catch {
-		p.cancel("Failed to unlock vault. Wrong password?");
+	} catch (err: unknown) {
+		const code = (err as NodeJS.ErrnoException).code;
+		if (code === "ENOENT") {
+			p.cancel("Vault file not found. Run `sentinel init` first.");
+		} else if (code === "EACCES") {
+			p.cancel(`Vault file permission denied: ${config.vaultPath}`);
+		} else {
+			p.cancel("Failed to unlock vault. Wrong password?");
+		}
 		return;
 	}
 
-	// Get API key from vault
+	// Get API key from vault — distinguish missing key from corruption/decryption errors
 	let apiKey: string;
 	try {
 		const creds = await vault.retrieve("anthropic");
 		apiKey = creds.key;
 		if (!apiKey) throw new Error("No API key found");
-	} catch {
+	} catch (err: unknown) {
 		vault.destroy();
-		p.cancel("No Anthropic API key in vault. Run `sentinel init` first.");
+		const msg = err instanceof Error ? err.message : "Unknown error";
+		if (msg.includes("No credential found") || msg.includes("No API key found")) {
+			p.cancel("No Anthropic API key in vault. Run `sentinel init` first.");
+		} else {
+			p.cancel(`Failed to retrieve API key: ${msg}`);
+		}
 		return;
 	}
 
@@ -60,9 +73,13 @@ export async function chatCommand(config: SentinelConfig, _dataDir: string): Pro
 	console.log(chalk.dim(`Session: ${sessionId}`));
 	console.log(chalk.dim("Type your message. Press Ctrl+C to exit.\n"));
 
+	const agentId = `cli-${sessionId.slice(0, 8)}`;
+	const pollerCtrl = new AbortController();
+
 	// Graceful shutdown
 	const shutdown = () => {
 		console.log(chalk.dim("\nShutting down..."));
+		pollerCtrl.abort();
 		vault.destroy();
 		auditLogger.close();
 		server.close();
@@ -71,7 +88,9 @@ export async function chatCommand(config: SentinelConfig, _dataDir: string): Pro
 	process.on("SIGINT", shutdown);
 	process.on("SIGTERM", shutdown);
 
-	const agentId = `cli-${sessionId.slice(0, 8)}`;
+	// Start confirmation poller concurrently
+	const pollerPromise = startConfirmationPoller(executorUrl, pollerCtrl.signal);
+
 	try {
 		await agentLoop({
 			executorUrl,
@@ -87,6 +106,8 @@ export async function chatCommand(config: SentinelConfig, _dataDir: string): Pro
 			console.error(chalk.red(`Error: ${error}`));
 		}
 	} finally {
+		pollerCtrl.abort();
+		await pollerPromise;
 		vault.destroy();
 		auditLogger.close();
 		server.close();

@@ -1,4 +1,11 @@
-import { mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import {
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -7,16 +14,20 @@ import { executeWriteFile } from "./write-file.js";
 let tempDir: string;
 
 beforeEach(() => {
-	tempDir = mkdtempSync(join(tmpdir(), "sentinel-write-test-"));
+	// Use realpathSync to resolve macOS /var -> /private/var symlink,
+	// ensuring SENTINEL_ALLOWED_ROOTS matches realpath-resolved paths
+	tempDir = realpathSync(mkdtempSync(join(tmpdir(), "sentinel-write-test-")));
 });
 
 afterEach(() => {
 	rmSync(tempDir, { recursive: true, force: true });
 	delete process.env.SENTINEL_DOCKER;
+	delete process.env.SENTINEL_ALLOWED_ROOTS;
 });
 
 describe("executeWriteFile", () => {
 	it("writes file successfully", async () => {
+		process.env.SENTINEL_ALLOWED_ROOTS = tempDir;
 		const path = join(tempDir, "test.txt");
 		const result = await executeWriteFile({ path, content: "hello" }, "test-id");
 		expect(result.success).toBe(true);
@@ -85,8 +96,21 @@ describe("executeWriteFile", () => {
 		});
 	});
 
+	it("rejects write to a symlink path", async () => {
+		process.env.SENTINEL_ALLOWED_ROOTS = tempDir;
+		const realFile = join(tempDir, "real.txt");
+		writeFileSync(realFile, "original");
+		const linkPath = join(tempDir, "link.txt");
+		symlinkSync(realFile, linkPath);
+
+		const result = await executeWriteFile({ path: linkPath, content: "evil" }, "test-id");
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("symlink");
+	});
+
 	describe("Local dev mode (no SENTINEL_DOCKER)", () => {
-		it("allows writes to arbitrary paths", async () => {
+		it("allows writes within allowed roots", async () => {
+			process.env.SENTINEL_ALLOWED_ROOTS = tempDir;
 			const path = join(tempDir, "local-test.txt");
 			const result = await executeWriteFile({ path, content: "local" }, "test-id");
 			expect(result.success).toBe(true);
