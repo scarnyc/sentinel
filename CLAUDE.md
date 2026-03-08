@@ -5,13 +5,14 @@ Sentinel is a security-hardened agent runtime with process isolation between the
 ## Next Step — Hardening TODO
 
 **MVP scope (protect local Mac Mini):**
+- [x] Agent container: `network_mode: "none"` — deferred; `internal: true` is sufficient (UDS transport needed for `none`)
+- [x] Executor: path whitelist (`allowedRoots`) — `isPathAllowed()` in path-guard.ts with symlink protection
+- [x] Config freeze: `validateConfig()` + `Object.freeze()` — crashes on missing/invalid policy at startup
+- [x] Bash deny-list: destructive `rm -rf /~/\$HOME`, mail/email (`mail`,`sendmail`,`mutt`,`postfix`), DNS exfil (`dig`,`nslookup`,`host`)
+- [x] PII scrubbing: regex-based patterns for SSN, phone, email, salary, LinkedIn/GitHub URLs in `credential-patterns.ts`
 - [ ] Agent proposes, human reviews in batch (PR model)
 - [ ] Set up OpenClaw — be cautious and read the setup steps in OpenClaw repo as we will need to modify them to work with Sentinel
 - [ ] Google Workspace CLI integration — [`googleworkspace/cli`](https://github.com/googleworkspace/cli) as MCP tool source for executor
-- [ ] Agent container: `network_mode: "none"` in docker-compose.yml — zero egress
-- [ ] Executor: path whitelist (`allowedRoots: ["~/Code"]`) — reject file ops outside
-- [ ] Config freeze: `Object.freeze()` on loaded config, crash on missing policy (Invariant #6)
-- [ ] Bash deny-list additions: `rm -rf /`, `rm -rf ~`, `rm -rf $HOME`, mail/email commands
 
 
 ## Quick Commands
@@ -302,6 +303,7 @@ See "Next Step" section above for the concrete TODO list. Threat model: protect 
 
 ### Backlog
 
+#### Infrastructure & Integration
 - [ ] sqlite-vec integration design — embedding model, vec0 schema, hybrid FTS5+vec0 queries
 - [ ] Claude-mem setup (modify for security)
 - [ ] Plano model routing — GPT latest + fallbacks to Claude Opus, Gemini Flash Lite 3.1; reference [Claude chat 1](https://claude.ai/share/d7e9dbba-dec4-4f28-a3b7-b9920b76bd10), [Claude chat 2](https://claude.ai/share/c67fb5e7-eb4b-4356-be0e-d7ce66dd359c), [OpenAI model docs](https://developers.openai.com/api/docs/guides/latest-model)
@@ -312,3 +314,50 @@ See "Next Step" section above for the concrete TODO list. Threat model: protect 
 - [ ] OWASP Top 10 review — security audit of executor API surface
 - [ ] Research: Reddit security warning, ClawMetry review
 - [ ] Claude Code integrations and heartbeats for coding tasks via notes
+
+#### Phase 2: Personal AI Platform — Security Gaps
+
+Threat model expands from "protect Mac Mini from rogue coding agent" to "personal data governance for multi-agent platform." Requires `docs/phase-2-personal-platform.md` design doc before implementation.
+
+**Critical:**
+- [ ] **Email prompt injection defense** — Gmail is #1 attack surface; every email body is untrusted input; fundamentally different from coding agent model where agent only reads files you control
+
+**High:**
+- [ ] **PII scrubbing (Phase 2)** — extend beyond regex; deferred categories: ZIP codes (`\b\d{5}\b` — false positives), street addresses (contextual matching), names/cities/job titles/companies (NER required), demographics (gender, race, disability, veteran — NER required); bank accounts, medical records for financial/health agents
+- [ ] **Data compartmentalization (A2A)** — per-agent data boundaries; shopping agent must not see health data, legal agent must not see finances; enforce at executor level, not application level
+- [ ] **Memory isolation per domain** — claude-mem is currently shared; need domain-scoped partitions (health, financial, legal, etc.) to prevent cross-agent data leakage
+- [ ] **Financial transaction safety** — TUI confirmation insufficient for moving money; need amount thresholds, cooling periods, maybe 2FA; distinguish "show budget" (safe) from "transfer $5000" (stronger gating)
+- [ ] **Irreversible action classification** — sending email, creating calendar invite, submitting job application, posting notes cannot be undone; safe/confirm/block doesn't capture reversibility; outbound actions need higher gating than reads
+- [ ] **Per-agent MCP scope restrictions** — Gmail MCP reads ALL emails, Calendar sees ALL events; need per-agent scope (e.g., job hunting agent can only see emails labeled "Job Search"); principle of least privilege
+
+**Medium:**
+- [ ] **Other people's PII compliance** — lead list, customer support, legal agents handle third-party data; GDPR, CCPA, CAN-SPAM obligations; different from self-PII (can't consent on their behalf)
+- [ ] **Outbound data classification** — credential filter scrubs data coming TO agent, but agents SEND data out (emails, posts, documents); need outbound scrubbing ("don't include SSN in email draft")
+- [ ] **Audit log encryption at rest** — audit log stores everything in plain text SQLite; with health/financial/legal data, the audit log itself is a target
+- [ ] **Prompt injection (expanded surfaces)** — each new MCP tool = new injection vector; attacker embeds instructions in job listings, emails, support tickets, legal docs, shopping pages; current content moderation is basic pattern matching
+
+**Low:**
+- [ ] **Legal privilege protection** — attorney-client privileged data in memory is potentially discoverable; need ability to mark data as privileged, prevent plain-text logging
+- [ ] **Tiered sensitivity framework** — not all data equal: medical records > shopping preferences; `sensitivity: "critical" | "high" | "normal"` driving different handling per tier; foundational for all gaps above
+- [ ] **Social graph protection** — networking/referral agents know who you know, who owes favors, who you've asked for help; leaked memory could damage professional relationships; social capital data needs isolation
+
+#### Phase 2: Target Agent Roster
+
+| Agent | Sensitivity | Key Risk |
+|-------|------------|----------|
+| Coding assistant | Low | File system, code exec |
+| Content creator | Low | Outbound publishing |
+| Doc/deck creator | Medium | Confidential business docs |
+| Personal productivity | Medium | Calendar, email, notes (PII) |
+| Shopping agent | Medium | Payment info, addresses |
+| Lead list agent | Medium | Other people's PII |
+| Customer support | Medium | Customer PII, company data |
+| AI learning | Medium | Learning progress, skill gaps |
+| Job hunting | High | Resume PII, applications |
+| Interview prep | High | Salary expectations, weaknesses, personal stories |
+| Networking | High | Contact relationships, conversation history |
+| Referrals | High | Names + relationships + asks (social capital) |
+| Financial/budget | Critical | Bank accounts, income, spending |
+| Retirement planning | Critical | SSN, 401k, net worth |
+| Health analysis | Critical | Medical records, conditions, medications |
+| Legal assistant | Critical | Privileged communications, contracts |
