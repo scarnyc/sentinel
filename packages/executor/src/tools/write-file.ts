@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { ToolResult } from "@sentinel/types";
 import { isDeniedPath } from "./deny-list.js";
@@ -34,6 +34,31 @@ export async function executeWriteFile(
 			error: `Access denied: ${guard.reason}`,
 			duration_ms: Date.now() - start,
 		};
+	}
+
+	// SENTINEL: TOCTOU mitigation — reject if user-supplied path is a symlink
+	try {
+		const stat = await lstat(params.path);
+		if (stat.isSymbolicLink()) {
+			return {
+				manifestId,
+				success: false,
+				error: "Access denied: cannot write through symlink (TOCTOU mitigation)",
+				duration_ms: Date.now() - start,
+			};
+		}
+	} catch (err: unknown) {
+		const code = (err as NodeJS.ErrnoException).code;
+		if (code !== "ENOENT") {
+			// If we can't stat it and it's not a new file, deny
+			return {
+				manifestId,
+				success: false,
+				error: `Access denied: cannot verify path (${code})`,
+				duration_ms: Date.now() - start,
+			};
+		}
+		// ENOENT = new file, which is fine
 	}
 
 	// Defense-in-depth: restrict writes to allowed prefix in Docker

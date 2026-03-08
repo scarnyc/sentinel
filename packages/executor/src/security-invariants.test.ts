@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AuditLogger } from "@sentinel/audit";
@@ -53,7 +53,8 @@ async function postExecute(hono: Hono, manifest: ActionManifest) {
 }
 
 beforeEach(() => {
-	tempDir = mkdtempSync(join(tmpdir(), "sentinel-invariant-test-"));
+	tempDir = realpathSync(mkdtempSync(join(tmpdir(), "sentinel-invariant-test-")));
+	process.env.SENTINEL_ALLOWED_ROOTS = tempDir;
 	const dbPath = join(tempDir, "audit.db");
 	auditLogger = new AuditLogger(dbPath);
 	registry = createToolRegistry();
@@ -63,6 +64,7 @@ beforeEach(() => {
 afterEach(() => {
 	auditLogger.close();
 	rmSync(tempDir, { recursive: true, force: true });
+	delete process.env.SENTINEL_ALLOWED_ROOTS;
 });
 
 describe("Security Invariant #1: No credentials in tool responses", () => {

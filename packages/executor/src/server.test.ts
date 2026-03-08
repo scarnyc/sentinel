@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AuditLogger } from "@sentinel/audit";
@@ -48,7 +48,10 @@ async function postExecute(app: Hono, manifest: ActionManifest) {
 }
 
 beforeEach(() => {
-	tempDir = mkdtempSync(join(tmpdir(), "sentinel-exec-test-"));
+	// Use realpathSync to resolve macOS /var -> /private/var symlink
+	tempDir = realpathSync(mkdtempSync(join(tmpdir(), "sentinel-exec-test-")));
+	// Allow tmpdir paths so file-based tool tests work with cwd-default path guard
+	process.env.SENTINEL_ALLOWED_ROOTS = tempDir;
 	const dbPath = join(tempDir, "audit.db");
 	auditLogger = new AuditLogger(dbPath);
 	registry = createToolRegistry();
@@ -60,6 +63,7 @@ beforeEach(() => {
 afterEach(() => {
 	auditLogger.close();
 	rmSync(tempDir, { recursive: true, force: true });
+	delete process.env.SENTINEL_ALLOWED_ROOTS;
 });
 
 describe("GET /health", () => {
