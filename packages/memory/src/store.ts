@@ -337,11 +337,11 @@ export class MemoryStore {
 			input.periodStart,
 			input.periodEnd,
 			input.title,
-			JSON.stringify(input.investigated),
-			JSON.stringify(input.learned),
-			JSON.stringify(input.completed),
-			JSON.stringify(input.nextSteps),
-			JSON.stringify(input.observationIds),
+			JSON.stringify(input.investigated ?? []),
+			JSON.stringify(input.learned ?? []),
+			JSON.stringify(input.completed ?? []),
+			JSON.stringify(input.nextSteps ?? []),
+			JSON.stringify(input.observationIds ?? []),
 		);
 		return id;
 	}
