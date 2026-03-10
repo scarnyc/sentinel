@@ -1,4 +1,4 @@
-import { generateKeyPairSync, createPrivateKey, sign as cryptoSign } from "node:crypto";
+import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -217,24 +217,17 @@ describe("Merkle hash-chain audit log", () => {
 	});
 
 	it("tampered manifest signature detected by verifyChain()", () => {
-		const dbPath = makeTempDbPath();
-		const logger = new AuditLogger(dbPath);
-
-		// Generate Ed25519 key pair
 		const { publicKey, privateKey } = generateKeyPairSync("ed25519", {
 			publicKeyEncoding: { type: "spki", format: "der" },
 			privateKeyEncoding: { type: "pkcs8", format: "der" },
 		});
 
-		// Log an entry, then manually sign its entry_hash and store in DB
-		const entry = makeEntry({ timestamp: "2026-01-01T00:00:00.000Z" });
-		const entryHash = computeEntryHash(entry, "");
-		const key = createPrivateKey({ key: privateKey, format: "der", type: "pkcs8" });
-		const signature = cryptoSign(null, Buffer.from(entryHash), key).toString("hex");
+		const dbPath = makeTempDbPath();
+		// Pass signing key to logger — signing happens inside log() with real prevHash
+		const logger = new AuditLogger(dbPath, Buffer.from(privateKey));
 
-		// Log with signature included (signature is part of the hash chain)
-		const signedEntry = { ...entry, signature };
-		logger.log(signedEntry);
+		const entry = makeEntry({ timestamp: "2026-01-01T00:00:00.000Z" });
+		logger.log(entry);
 
 		// Verify passes with correct public key
 		const resultBefore = logger.verifyChain(Buffer.from(publicKey));
@@ -248,10 +241,30 @@ describe("Merkle hash-chain audit log", () => {
 		);
 		db.close();
 
-		// verifyChain detects the tampered signature (hash mismatch since signature is in hash)
+		// verifyChain detects the tampered signature
 		const resultAfter = logger.verifyChain(Buffer.from(publicKey));
 		expect(resultAfter.valid).toBe(false);
 		if (!resultAfter.valid) expect(resultAfter.brokenAt).toBe(entry.id);
+		logger.close();
+	});
+
+	it("multi-entry signed chain verifies correctly", () => {
+		const { publicKey, privateKey } = generateKeyPairSync("ed25519", {
+			publicKeyEncoding: { type: "spki", format: "der" },
+			privateKeyEncoding: { type: "pkcs8", format: "der" },
+		});
+
+		const dbPath = makeTempDbPath();
+		const logger = new AuditLogger(dbPath, Buffer.from(privateKey));
+
+		// Log multiple entries — each signed with the real prevHash inside the logger
+		logger.log(makeEntry({ timestamp: "2026-01-01T00:00:00.000Z" }));
+		logger.log(makeEntry({ timestamp: "2026-01-02T00:00:00.000Z" }));
+		logger.log(makeEntry({ timestamp: "2026-01-03T00:00:00.000Z" }));
+
+		// All entries should verify (including entries 2 and 3 with non-empty prevHash)
+		const result = logger.verifyChain(Buffer.from(publicKey));
+		expect(result.valid).toBe(true);
 		logger.close();
 	});
 
@@ -259,13 +272,12 @@ describe("Merkle hash-chain audit log", () => {
 		const dbPath = makeTempDbPath();
 		const logger = new AuditLogger(dbPath);
 
-		// Generate a key pair for verification
 		const { publicKey } = generateKeyPairSync("ed25519", {
 			publicKeyEncoding: { type: "spki", format: "der" },
 			privateKeyEncoding: { type: "pkcs8", format: "der" },
 		});
 
-		// Log entries without signatures (backward compat)
+		// Log entries without signatures (no signing key in constructor)
 		logger.log(makeEntry({ timestamp: "2026-01-01T00:00:00.000Z" }));
 		logger.log(makeEntry({ timestamp: "2026-01-02T00:00:00.000Z" }));
 

@@ -1,4 +1,10 @@
-import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto";
+import {
+	createHash,
+	createPrivateKey,
+	createPublicKey,
+	sign as cryptoSign,
+	verify as cryptoVerify,
+} from "node:crypto";
 import type { AuditEntry } from "@sentinel/types";
 import Database from "better-sqlite3";
 import { type AuditFilters, buildFilterQuery } from "./queries.js";
@@ -98,8 +104,9 @@ export class AuditLogger {
 	private db: Database.Database | null;
 	private insertStmt: Database.Statement;
 	private getLastHashStmt: Database.Statement;
+	private signingKey: Buffer | undefined;
 
-	constructor(dbPath: string) {
+	constructor(dbPath: string, signingKey?: Buffer) {
 		const db = new Database(dbPath);
 		db.pragma("journal_mode = WAL");
 		db.exec(CREATE_TABLE);
@@ -109,6 +116,7 @@ export class AuditLogger {
 		db.exec(CREATE_INDEX_TOOL);
 
 		this.db = db;
+		this.signingKey = signingKey;
 		this.insertStmt = db.prepare(INSERT_SQL);
 		this.getLastHashStmt = db.prepare(
 			"SELECT entry_hash FROM audit_log ORDER BY rowid DESC LIMIT 1",
@@ -124,6 +132,13 @@ export class AuditLogger {
 			const prevHash = lastRow?.entry_hash ?? "";
 			const entryHash = computeEntryHash(entry, prevHash);
 
+			// Sign the actual entryHash (computed with real prevHash) if signing key is configured
+			let signature: string | null = entry.signature ?? null;
+			if (this.signingKey && !signature) {
+				const key = createPrivateKey({ key: this.signingKey, format: "der", type: "pkcs8" });
+				signature = cryptoSign(null, Buffer.from(entryHash), key).toString("hex");
+			}
+
 			this.insertStmt.run(
 				entry.id,
 				entry.timestamp,
@@ -138,7 +153,7 @@ export class AuditLogger {
 				entry.duration_ms ?? null,
 				prevHash,
 				entryHash,
-				entry.signature ?? null,
+				signature,
 			);
 		});
 
