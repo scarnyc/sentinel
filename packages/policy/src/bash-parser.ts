@@ -67,15 +67,12 @@ const DANGEROUS_COMMANDS = new Set([
 	"env",
 	"eval",
 	"exec",
-	"mail",
-	"mailx",
-	"sendmail",
-	"mutt",
-	"postfix",
 	"nslookup",
 	"dig",
 	"host",
 ]);
+
+const IRREVERSIBLE_COMMANDS = new Set(["mail", "mailx", "sendmail", "mutt", "postfix"]);
 
 const SENSITIVE_PATH_PATTERNS = [
 	/~\/\.ssh\//,
@@ -128,6 +125,9 @@ function classifySingleCommand(command: string): ActionCategory {
 	// Extract the first word(s) for command matching
 	const words = trimmed.split(/\s+/);
 	const firstWord = words[0];
+
+	// Mail-related commands are write-irreversible (sends messages that cannot be recalled)
+	if (IRREVERSIBLE_COMMANDS.has(firstWord)) return "write-irreversible";
 
 	// Check multi-word dangerous patterns (eval, exec are single-word)
 	if (DANGEROUS_COMMANDS.has(firstWord)) return "dangerous";

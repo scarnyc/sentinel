@@ -1,10 +1,10 @@
-import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { generateKeyPair } from "@sentinel/crypto";
 import type { AuditEntry } from "@sentinel/types";
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuditLogger, computeEntryHash } from "./logger.js";
 
 function makeTempDbPath(): string {
@@ -216,24 +216,18 @@ describe("Merkle hash-chain audit log", () => {
 		logger.close();
 	});
 
-	it("tampered manifest signature detected by verifyChain()", () => {
-		const { publicKey, privateKey } = generateKeyPairSync("ed25519", {
-			publicKeyEncoding: { type: "spki", format: "der" },
-			privateKeyEncoding: { type: "pkcs8", format: "der" },
-		});
+	it("tampered signature detected by verifyChain()", () => {
+		const { publicKey, privateKey } = generateKeyPair();
 
 		const dbPath = makeTempDbPath();
-		// Pass signing key to logger — signing happens inside log() with real prevHash
-		const logger = new AuditLogger(dbPath, Buffer.from(privateKey));
+		const logger = new AuditLogger(dbPath, privateKey);
 
 		const entry = makeEntry({ timestamp: "2026-01-01T00:00:00.000Z" });
 		logger.log(entry);
 
-		// Verify passes with correct public key
-		const resultBefore = logger.verifyChain(Buffer.from(publicKey));
+		const resultBefore = logger.verifyChain(publicKey);
 		expect(resultBefore.valid).toBe(true);
 
-		// Tamper with the signature in the DB
 		const db = new Database(dbPath);
 		db.prepare("UPDATE audit_log SET signature = ? WHERE id = ?").run(
 			"deadbeef".repeat(16),
@@ -241,30 +235,48 @@ describe("Merkle hash-chain audit log", () => {
 		);
 		db.close();
 
-		// verifyChain detects the tampered signature
-		const resultAfter = logger.verifyChain(Buffer.from(publicKey));
+		const resultAfter = logger.verifyChain(publicKey);
 		expect(resultAfter.valid).toBe(false);
 		if (!resultAfter.valid) expect(resultAfter.brokenAt).toBe(entry.id);
 		logger.close();
 	});
 
 	it("multi-entry signed chain verifies correctly", () => {
-		const { publicKey, privateKey } = generateKeyPairSync("ed25519", {
-			publicKeyEncoding: { type: "spki", format: "der" },
-			privateKeyEncoding: { type: "pkcs8", format: "der" },
-		});
+		const { publicKey, privateKey } = generateKeyPair();
 
 		const dbPath = makeTempDbPath();
-		const logger = new AuditLogger(dbPath, Buffer.from(privateKey));
+		const logger = new AuditLogger(dbPath, privateKey);
 
-		// Log multiple entries — each signed with the real prevHash inside the logger
 		logger.log(makeEntry({ timestamp: "2026-01-01T00:00:00.000Z" }));
 		logger.log(makeEntry({ timestamp: "2026-01-02T00:00:00.000Z" }));
 		logger.log(makeEntry({ timestamp: "2026-01-03T00:00:00.000Z" }));
 
-		// All entries should verify (including entries 2 and 3 with non-empty prevHash)
-		const result = logger.verifyChain(Buffer.from(publicKey));
+		const result = logger.verifyChain(publicKey);
 		expect(result.valid).toBe(true);
+		logger.close();
+	});
+
+	it("tampered signature on middle entry in multi-entry chain detected", () => {
+		const { publicKey, privateKey } = generateKeyPair();
+
+		const dbPath = makeTempDbPath();
+		const logger = new AuditLogger(dbPath, privateKey);
+
+		const e1 = makeEntry({ timestamp: "2026-01-01T00:00:00.000Z" });
+		const e2 = makeEntry({ timestamp: "2026-01-02T00:00:00.000Z" });
+		const e3 = makeEntry({ timestamp: "2026-01-03T00:00:00.000Z" });
+		logger.log(e1);
+		logger.log(e2);
+		logger.log(e3);
+
+		// Tamper with the middle entry's signature
+		const db = new Database(dbPath);
+		db.prepare("UPDATE audit_log SET signature = ? WHERE id = ?").run("deadbeef".repeat(16), e2.id);
+		db.close();
+
+		const result = logger.verifyChain(publicKey);
+		expect(result.valid).toBe(false);
+		if (!result.valid) expect(result.brokenAt).toBe(e2.id);
 		logger.close();
 	});
 
@@ -272,18 +284,58 @@ describe("Merkle hash-chain audit log", () => {
 		const dbPath = makeTempDbPath();
 		const logger = new AuditLogger(dbPath);
 
-		const { publicKey } = generateKeyPairSync("ed25519", {
-			publicKeyEncoding: { type: "spki", format: "der" },
-			privateKeyEncoding: { type: "pkcs8", format: "der" },
-		});
+		const { publicKey } = generateKeyPair();
 
-		// Log entries without signatures (no signing key in constructor)
 		logger.log(makeEntry({ timestamp: "2026-01-01T00:00:00.000Z" }));
 		logger.log(makeEntry({ timestamp: "2026-01-02T00:00:00.000Z" }));
 
-		// verifyChain should still pass — unsigned entries are accepted
-		const result = logger.verifyChain(Buffer.from(publicKey));
+		const result = logger.verifyChain(publicKey);
 		expect(result.valid).toBe(true);
+		logger.close();
+	});
+
+	it("invalid signing key degrades gracefully — entry still logged (Invariant #2)", () => {
+		const dbPath = makeTempDbPath();
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		// Construct logger with an invalid signing key
+		const logger = new AuditLogger(dbPath, Buffer.from("not-a-valid-ed25519-key"));
+		const entry = makeEntry({ timestamp: "2026-01-01T00:00:00.000Z" });
+		logger.log(entry);
+
+		// Entry must still be logged (Invariant #2: all tool calls audited)
+		const db = new Database(dbPath);
+		const row = db.prepare("SELECT signature FROM audit_log WHERE id = ?").get(entry.id) as {
+			signature: string | null;
+		};
+		db.close();
+
+		expect(row).toBeTruthy();
+		expect(row.signature).toBeNull();
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining("[audit] Ed25519 signing failed"),
+		);
+
+		consoleSpy.mockRestore();
+		logger.close();
+	});
+
+	it("non-hex signature in DB treated as verification failure", () => {
+		const { publicKey, privateKey } = generateKeyPair();
+
+		const dbPath = makeTempDbPath();
+		const logger = new AuditLogger(dbPath, privateKey);
+		const entry = makeEntry({ timestamp: "2026-01-01T00:00:00.000Z" });
+		logger.log(entry);
+
+		// Corrupt the signature to non-hex
+		const db = new Database(dbPath);
+		db.prepare("UPDATE audit_log SET signature = ? WHERE id = ?").run("ZZZZ-not-hex", entry.id);
+		db.close();
+
+		const result = logger.verifyChain(publicKey);
+		expect(result.valid).toBe(false);
+		if (!result.valid) expect(result.brokenAt).toBe(entry.id);
 		logger.close();
 	});
 });

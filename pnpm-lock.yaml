@@ -51,6 +51,9 @@ importers:
 
   packages/audit:
     dependencies:
+      '@sentinel/crypto':
+        specifier: workspace:*
+        version: link:../crypto
       '@sentinel/types':
         specifier: workspace:*
         version: link:../types

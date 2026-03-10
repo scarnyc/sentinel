@@ -66,9 +66,6 @@ function categoryToDecision(category: ActionCategory, autoApproveReadOps: boolea
 	}
 }
 
-/** Mail-related commands that send messages (irreversible) */
-const IRREVERSIBLE_BASH_PATTERNS = /\b(mail|mailx|sendmail|mutt|postfix)\b/;
-
 /** Gmail send/draft-send method patterns */
 const GMAIL_SEND_PATTERNS = /\b(send|drafts\.send)\b/;
 
@@ -97,17 +94,12 @@ function classifyGwsTool(parameters: Record<string, unknown>): ActionCategory | 
 export function classify(manifest: ActionManifest, config: SentinelConfig): PolicyDecision {
 	const { tool, parameters } = manifest;
 
-	// For bash tool: classify the command, upgrading mail commands to write-irreversible
 	if (tool === "bash") {
 		const command = typeof parameters.command === "string" ? parameters.command : "";
 		const category = classifyBashCommand(command);
-		if (IRREVERSIBLE_BASH_PATTERNS.test(command)) {
-			return categoryToDecision("write-irreversible", config.autoApproveReadOps);
-		}
 		return categoryToDecision(category, config.autoApproveReadOps);
 	}
 
-	// Detect irreversible GWS patterns before config lookup
 	if (tool === "gws") {
 		const gwsCategory = classifyGwsTool(parameters);
 		if (gwsCategory) {
@@ -115,7 +107,6 @@ export function classify(manifest: ActionManifest, config: SentinelConfig): Poli
 		}
 	}
 
-	// Find matching classification in config
 	const classification = findClassification(tool, config.classifications);
 
 	if (classification) {
@@ -134,11 +125,9 @@ export function classify(manifest: ActionManifest, config: SentinelConfig): Poli
 		return categoryToDecision(category, config.autoApproveReadOps);
 	}
 
-	// MCP tools (contain __) default to write
 	if (tool.includes("__")) {
 		return categoryToDecision("write", config.autoApproveReadOps);
 	}
 
-	// Unknown tools default to write
 	return categoryToDecision("write", config.autoApproveReadOps);
 }

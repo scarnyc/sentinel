@@ -22,7 +22,6 @@ export const ActionManifestSchema = z.object({
 	category: ActionCategorySchema.optional(),
 	sessionId: z.string().min(1),
 	agentId: z.string().min(1),
-	signature: z.string().optional(),
 });
 export type ActionManifest = z.infer<typeof ActionManifestSchema>;
 

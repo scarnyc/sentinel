@@ -1,10 +1,5 @@
-import {
-	createHash,
-	createPrivateKey,
-	createPublicKey,
-	sign as cryptoSign,
-	verify as cryptoVerify,
-} from "node:crypto";
+import { createHash } from "node:crypto";
+import { sign as ed25519Sign, verify as ed25519Verify } from "@sentinel/crypto";
 import type { AuditEntry } from "@sentinel/types";
 import Database from "better-sqlite3";
 import { type AuditFilters, buildFilterQuery } from "./queries.js";
@@ -132,11 +127,17 @@ export class AuditLogger {
 			const prevHash = lastRow?.entry_hash ?? "";
 			const entryHash = computeEntryHash(entry, prevHash);
 
-			// Sign the actual entryHash (computed with real prevHash) if signing key is configured
-			let signature: string | null = entry.signature ?? null;
-			if (this.signingKey && !signature) {
-				const key = createPrivateKey({ key: this.signingKey, format: "der", type: "pkcs8" });
-				signature = cryptoSign(null, Buffer.from(entryHash), key).toString("hex");
+			// Always recompute signature when signing key is configured (ignore caller-supplied values).
+			// Signing failure must not prevent audit logging (Invariant #2 > Invariant #7).
+			let signature: string | null = null;
+			if (this.signingKey) {
+				try {
+					signature = ed25519Sign(entryHash, this.signingKey);
+				} catch (signErr) {
+					console.error(
+						`[audit] Ed25519 signing failed for entry ${entry.id}: ${signErr instanceof Error ? signErr.message : String(signErr)}`,
+					);
+				}
 			}
 
 			this.insertStmt.run(
@@ -233,14 +234,13 @@ export class AuditLogger {
 
 			// Verify Ed25519 signature when present and public key provided
 			if (row.signature && publicKey) {
-				const key = createPublicKey({ key: publicKey, format: "der", type: "spki" });
-				const valid = cryptoVerify(
-					null,
-					Buffer.from(row.entry_hash),
-					key,
-					Buffer.from(row.signature, "hex"),
-				);
-				if (!valid) {
+				try {
+					const valid = ed25519Verify(row.entry_hash, row.signature, publicKey);
+					if (!valid) {
+						return { valid: false, brokenAt: row.id };
+					}
+				} catch {
+					// Malformed signature or key — treat as verification failure for this entry
 					return { valid: false, brokenAt: row.id };
 				}
 			}

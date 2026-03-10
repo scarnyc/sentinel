@@ -18,6 +18,7 @@
 		"test:coverage": "vitest run --coverage"
 	},
 	"dependencies": {
+		"@sentinel/crypto": "workspace:*",
 		"@sentinel/types": "workspace:*",
 		"better-sqlite3": "^11.8.0"
 	},
