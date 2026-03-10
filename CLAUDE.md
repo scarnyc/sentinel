@@ -2,14 +2,18 @@
 
 Sentinel is a security-hardened agent runtime with process isolation between the agent (untrusted) and executor (trusted). Local-first, runs on Mac Mini via Docker Compose.
 
-## Current Phase: Memory Store Integration
+## Current Phase: Phase 2 — Integrations + Real Agents
 
 **Roadmap**: `docs/plans/path-a-v2-adopt-openfang-primitives.md`
+**Wave spec**: `docs/superpowers/specs/2026-03-10-phase-2-waves-design.md`
 
-**Phase 1 completed** (PR #8, 490 tests). **Memory store** (PR #9, 542 tests): `@sentinel/memory` with SQLite + FTS5 + sqlite-vec, hybrid search, credential/PII scrubbing, local embeddings.
+**Phase 1 completed** (PR #8, 490 tests). **Memory store** (PR #9, 542 tests). **Phase 2** decomposes into 4 waves.
 
-**Next Steps**
-- [ ] Plano model routing | GPT latest + fallbacks to Claude Opus, Gemini Flash Lite 3.1 | 4 hr |
+**Wave Progress**
+- [x] Wave 2.1: Security Primitives — Ed25519 signing + irreversible classification (553 tests)
+- [ ] Wave 2.2: Google Workspace CLI + Email Defense
+- [ ] Wave 2.3: OpenClaw + Sentinel Plugin
+- [ ] Wave 2.4: LLM Infrastructure (Plano routing, prompt caching, Promptfoo)
 
 ## Quick Commands
 
@@ -127,7 +131,7 @@ secure-openclaw/
 ├── .rampart/                    # Rampart project policy (host-level firewall)
 ├── packages/                    # MVP code (pnpm workspace)
 │   ├── types/                   # Shared types + Zod schemas
-│   ├── crypto/                  # Credential vault (AES-256-GCM)
+│   ├── crypto/                  # Credential vault (AES-256-GCM) + Ed25519 signing
 │   ├── policy/                  # Deterministic action classifier
 │   ├── audit/                   # Append-only SQLite audit log
 │   ├── executor/                # Trusted process (Hono :3141)
@@ -162,7 +166,7 @@ These 12 rules are **non-negotiable**. Every PR must maintain them. Each has a r
 | 4 | **Memory size caps enforced** — claude-mem entries capped at 10KB each, 100MB total | Assert: oversized observation truncated or rejected |
 | 5 | **No credential storage in memory** — entries scanned for credential patterns before SQLite write | Assert: API key pattern in memory entry is rejected |
 | 6 | **Policy changes require restart** — config frozen via `Object.freeze(structuredClone())` at startup | Assert: frozen config mutation throws TypeError |
-| 7 | **Merkle chain tamper-evident** — SHA-256 hash chain over audit rows; `verifyChain()` detects tampering | Assert: modified audit row detected by `verifyChain()` |
+| 7 | **Merkle chain tamper-evident + Ed25519 signed** — SHA-256 hash chain over audit rows; optional Ed25519 manifest signatures; `verifyChain(publicKey?)` detects tampering and signature forgery | Assert: modified audit row detected by `verifyChain()`; tampered signature detected |
 | 8 | **SSRF blocked** — private IPs, localhost, 169.254.x, IPv6 ULA/link-local rejected before outbound requests | Assert: private IPs / localhost / 169.254.x rejected |
 | 9 | **Per-agent rate limiting** — GCRA algorithm enforces per-agent request rate with configurable burst | Assert: burst exceeding rate gets 429-equivalent rejection |
 | 10 | **PII scrubbed from outbound** — SSN, phone, email, salary patterns redacted before output reaches agent | Assert: SSN in tool output → `[PII_REDACTED]` |
@@ -183,6 +187,15 @@ These 12 rules are **non-negotiable**. Every PR must maintain them. Each has a r
 - **Single source of truth** in `packages/types/src/credential-patterns.ts`
 - Both `executor/credential-filter.ts` and `audit/redact.ts` import from types
 - Add new patterns here only — never maintain separate pattern lists
+
+### Action Categories
+Four categories with graduated confirmation: `read` (auto-approve configurable), `write` (confirm), `write-irreversible` (always confirm + "cannot be undone" TUI warning), `dangerous` (always confirm). `write-irreversible` targets email send, calendar invites with attendees, financial transactions. Classifier in `packages/policy/src/classifier.ts`.
+
+### Ed25519 Manifest Signing
+- Signing module: `packages/crypto/src/signing.ts` — `generateKeyPair()`, `sign()`, `verify()`
+- Signature stored in audit entry, excluded from Merkle hash (signs the hash — circular dependency otherwise)
+- `verifyChain(publicKey?)` validates both hash chain AND signatures when public key provided
+- Backward compatible: unsigned entries pass verification
 
 ### Bash Sandboxing
 - **Interpreter inline-exec** (`python3 -c`, `node -e`, etc.) classified as "dangerous" — always requires confirmation
@@ -285,10 +298,12 @@ Defined in `.claude/settings.json` — includes test, lint, and typecheck comman
 | 1: Harden for Confidence | 490 | #8 | Merkle audit, SSRF, loop guard, rate limiter, PII scrubber, auth, output truncation |
 | Memory Store | 542 | #9 | `@sentinel/memory`: SQLite + FTS5 + sqlite-vec, hybrid search, embeddings, consolidation |
 | Rampart Integration | — | — | Host-level Rampart firewall v0.8.3, 45 standard + 3 Sentinel project policies, PreToolUse hooks |
+| Wave 2.1: Security Primitives | 553 | — | Ed25519 manifest signing, `write-irreversible` category, irreversible TUI warning |
 
 ### Backlog
 
 #### Infrastructure & Integration
+- [ ] Create a google workspace account for openclaw
 - [ ] Plano model routing — GPT latest + fallbacks to Claude Opus, Gemini Flash Lite 3.1; reference [Claude chat 1](https://claude.ai/share/d7e9dbba-dec4-4f28-a3b7-b9920b76bd10), [Claude chat 2](https://claude.ai/share/c67fb5e7-eb4b-4356-be0e-d7ce66dd359c), [OpenAI model docs](https://developers.openai.com/api/docs/guides/latest-model)
 - [ ] CopilotKit integration — dedicated chatbot use case + AI learning prototype; ag-ui evaluation for MCP app integration; A2A for multi-agent orchestration
 - [ ] Write-action HITL via ag-ui — replace TUI confirmation with rich ag-ui frontend
@@ -296,5 +311,8 @@ Defined in `.claude/settings.json` — includes test, lint, and typecheck comman
 - [ ] Google Model Armor — add to executor content moderation pipeline
 - [ ] Research: Reddit security warning, ClawMetry review
 - [ ] Claude Code integrations and heartbeats for coding tasks via notes
-
-See `docs/plans/path-a-v2-adopt-openfang-primitives.md` §Phase 2 for security gaps and agent roster.
+- [ ] Promptfoo for evals and red teaming (pen testing, adversarial attacks): https://github.com/promptfoo/promptfoo#readme
+- [ ] Posthog for app analytics: https://posthog.com/
+- [ ] Moltworkers CF deployment: (https://blog.cloudflare.com/moltworker-self-hosted-ai-agent/) | (https://github.com/cloudflare/moltworker)
+- See `docs/plans/path-a-v2-adopt-openfang-primitives.md` §Phase 2 for security gaps and agent roster.
+- See openclaw repo: https://github.com/openclaw/openclaw

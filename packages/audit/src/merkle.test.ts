@@ -1,3 +1,4 @@
+import { generateKeyPairSync, createPrivateKey, sign as cryptoSign } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -212,6 +213,65 @@ describe("Merkle hash-chain audit log", () => {
 		expect(results).toHaveLength(1);
 		expect(results[0].id).toBe(entry.id);
 		expect(results[0].tool).toBe("bash");
+		logger.close();
+	});
+
+	it("tampered manifest signature detected by verifyChain()", () => {
+		const dbPath = makeTempDbPath();
+		const logger = new AuditLogger(dbPath);
+
+		// Generate Ed25519 key pair
+		const { publicKey, privateKey } = generateKeyPairSync("ed25519", {
+			publicKeyEncoding: { type: "spki", format: "der" },
+			privateKeyEncoding: { type: "pkcs8", format: "der" },
+		});
+
+		// Log an entry, then manually sign its entry_hash and store in DB
+		const entry = makeEntry({ timestamp: "2026-01-01T00:00:00.000Z" });
+		const entryHash = computeEntryHash(entry, "");
+		const key = createPrivateKey({ key: privateKey, format: "der", type: "pkcs8" });
+		const signature = cryptoSign(null, Buffer.from(entryHash), key).toString("hex");
+
+		// Log with signature included (signature is part of the hash chain)
+		const signedEntry = { ...entry, signature };
+		logger.log(signedEntry);
+
+		// Verify passes with correct public key
+		const resultBefore = logger.verifyChain(Buffer.from(publicKey));
+		expect(resultBefore.valid).toBe(true);
+
+		// Tamper with the signature in the DB
+		const db = new Database(dbPath);
+		db.prepare("UPDATE audit_log SET signature = ? WHERE id = ?").run(
+			"deadbeef".repeat(16),
+			entry.id,
+		);
+		db.close();
+
+		// verifyChain detects the tampered signature (hash mismatch since signature is in hash)
+		const resultAfter = logger.verifyChain(Buffer.from(publicKey));
+		expect(resultAfter.valid).toBe(false);
+		if (!resultAfter.valid) expect(resultAfter.brokenAt).toBe(entry.id);
+		logger.close();
+	});
+
+	it("unsigned entries accepted by verifyChain() — backward compat", () => {
+		const dbPath = makeTempDbPath();
+		const logger = new AuditLogger(dbPath);
+
+		// Generate a key pair for verification
+		const { publicKey } = generateKeyPairSync("ed25519", {
+			publicKeyEncoding: { type: "spki", format: "der" },
+			privateKeyEncoding: { type: "pkcs8", format: "der" },
+		});
+
+		// Log entries without signatures (backward compat)
+		logger.log(makeEntry({ timestamp: "2026-01-01T00:00:00.000Z" }));
+		logger.log(makeEntry({ timestamp: "2026-01-02T00:00:00.000Z" }));
+
+		// verifyChain should still pass — unsigned entries are accepted
+		const result = logger.verifyChain(Buffer.from(publicKey));
+		expect(result.valid).toBe(true);
 		logger.close();
 	});
 });

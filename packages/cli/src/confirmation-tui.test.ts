@@ -41,4 +41,16 @@ describe("formatConfirmationPrompt", () => {
 		// Should NOT contain the full 300-char string
 		expect(output).not.toContain("x".repeat(300));
 	});
+
+	it("displays cannot-be-undone warning for write-irreversible actions", () => {
+		const irreversibleReq: PendingConfirmation = {
+			manifestId: "test-456",
+			tool: "gws",
+			parameters: { service: "gmail", method: "users.messages.send" },
+			category: "write-irreversible",
+			reason: "Irreversible action requires confirmation",
+		};
+		const output = formatConfirmationPrompt(irreversibleReq);
+		expect(output).toContain("CANNOT BE UNDONE");
+	});
 });

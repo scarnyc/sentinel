@@ -1,5 +1,6 @@
 import type { AuditLogger } from "@sentinel/audit";
-import { redactCredentials } from "@sentinel/audit";
+import { computeEntryHash, redactCredentials } from "@sentinel/audit";
+import { sign } from "@sentinel/crypto";
 import { classify, type LoopGuard, type RateLimiter } from "@sentinel/policy";
 import type {
 	ActionManifest,
@@ -28,6 +29,16 @@ function summarizeParams(params: Record<string, unknown>): string {
 export interface PipelineGuards {
 	rateLimiter?: RateLimiter;
 	loopGuard?: LoopGuard;
+	/** Ed25519 private key (DER/PKCS8) for manifest signing. When provided, all audit entries are signed. */
+	signingKey?: Buffer;
+}
+
+/** Sign an audit entry's hash with Ed25519 and attach the signature. */
+function signEntry(entry: AuditEntry, signingKey?: Buffer): AuditEntry {
+	if (!signingKey) return entry;
+	const entryHash = computeEntryHash(entry, "");
+	const signature = sign(entryHash, signingKey);
+	return { ...entry, signature };
 }
 
 export async function handleExecute(
@@ -38,6 +49,10 @@ export async function handleExecute(
 	confirmFn: ConfirmFn,
 	guards?: PipelineGuards,
 ): Promise<ToolResult> {
+	const signingKey = guards?.signingKey;
+	/** Log an audit entry, signing it with Ed25519 if a signing key is configured. */
+	const logSigned = (entry: AuditEntry): void => auditLogger.log(signEntry(entry, signingKey));
+
 	// 1. Validate manifest
 	const parsed = ActionManifestSchema.safeParse(rawManifest);
 	if (!parsed.success) {
@@ -49,7 +64,7 @@ export async function handleExecute(
 	if (guards?.rateLimiter) {
 		const rateResult = guards.rateLimiter.check(manifest.agentId);
 		if (!rateResult.allowed) {
-			auditLogger.log({
+			logSigned({
 				id: crypto.randomUUID(),
 				timestamp: new Date().toISOString(),
 				manifestId: manifest.id,
@@ -75,7 +90,7 @@ export async function handleExecute(
 	if (guards?.loopGuard) {
 		const loopResult = guards.loopGuard.check(manifest.agentId, manifest.tool, manifest.parameters);
 		if (loopResult.action === "warn") {
-			auditLogger.log({
+			logSigned({
 				id: crypto.randomUUID(),
 				timestamp: new Date().toISOString(),
 				manifestId: manifest.id,
@@ -90,7 +105,7 @@ export async function handleExecute(
 			});
 		}
 		if (loopResult.action === "block") {
-			auditLogger.log({
+			logSigned({
 				id: crypto.randomUUID(),
 				timestamp: new Date().toISOString(),
 				manifestId: manifest.id,
@@ -129,7 +144,7 @@ export async function handleExecute(
 	};
 
 	if (decision.action === "block") {
-		auditLogger.log({
+		logSigned({
 			...auditBase,
 			result: "blocked_by_policy",
 			duration_ms: 0,
@@ -145,7 +160,7 @@ export async function handleExecute(
 	if (decision.action === "confirm") {
 		const approved = await confirmFn(manifest, decision);
 		if (!approved) {
-			auditLogger.log({
+			logSigned({
 				...auditBase,
 				result: "denied_by_user",
 				duration_ms: 0,
@@ -163,7 +178,7 @@ export async function handleExecute(
 	const paramText = summarizeParams(manifest.parameters);
 	const preModeration = moderate(paramText);
 	if (preModeration.blocked) {
-		auditLogger.log({
+		logSigned({
 			...auditBase,
 			result: "blocked_by_policy",
 			duration_ms: 0,
@@ -179,7 +194,7 @@ export async function handleExecute(
 	// 7. Execute
 	const handler = registry.get(manifest.tool);
 	if (!handler) {
-		auditLogger.log({
+		logSigned({
 			...auditBase,
 			result: "failure",
 			duration_ms: 0,
@@ -204,7 +219,7 @@ export async function handleExecute(
 	if (result.output) {
 		const postModeration = moderate(result.output);
 		if (postModeration.blocked) {
-			auditLogger.log({
+			logSigned({
 				...auditBase,
 				result: "blocked_by_policy",
 				duration_ms: result.duration_ms,
@@ -219,7 +234,7 @@ export async function handleExecute(
 	}
 
 	// 11. Audit
-	auditLogger.log({
+	logSigned({
 		...auditBase,
 		result: result.success ? "success" : "failure",
 		duration_ms: result.duration_ms,

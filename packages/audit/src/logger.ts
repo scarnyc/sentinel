@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto";
 import type { AuditEntry } from "@sentinel/types";
 import Database from "better-sqlite3";
 import { type AuditFilters, buildFilterQuery } from "./queries.js";
@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
   duration_ms INTEGER,
   prev_hash TEXT NOT NULL DEFAULT '',
   entry_hash TEXT NOT NULL DEFAULT '',
+  signature TEXT,
   created_at TEXT DEFAULT (datetime('now'))
 )`;
 
@@ -29,8 +30,8 @@ const CREATE_INDEX_TIMESTAMP =
 const CREATE_INDEX_TOOL = "CREATE INDEX IF NOT EXISTS idx_audit_tool ON audit_log(tool)";
 
 const INSERT_SQL = `
-INSERT INTO audit_log (id, timestamp, manifest_id, session_id, agent_id, tool, category, decision, parameters_summary, result, duration_ms, prev_hash, entry_hash)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+INSERT INTO audit_log (id, timestamp, manifest_id, session_id, agent_id, tool, category, decision, parameters_summary, result, duration_ms, prev_hash, entry_hash, signature)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 interface AuditRow {
 	id: string;
@@ -46,6 +47,7 @@ interface AuditRow {
 	duration_ms: number | null;
 	prev_hash: string;
 	entry_hash: string;
+	signature: string | null;
 	created_at: string;
 }
 
@@ -56,6 +58,7 @@ export type ChainVerification = { valid: true } | { valid: false; brokenAt: stri
  * Uses JSON serialization to prevent delimiter injection (second-preimage attacks).
  * Covers ALL security-relevant fields: id, timestamp, manifestId, sessionId, agentId,
  * tool, category, decision, parameters_summary, result.
+ * Note: signature is deliberately excluded — it signs the entry_hash (circular dependency).
  */
 export function computeEntryHash(entry: AuditEntry, prevHash: string): string {
 	const data = JSON.stringify([
@@ -87,6 +90,7 @@ function rowToEntry(row: AuditRow): AuditEntry {
 		parameters_summary: row.parameters_summary,
 		result: row.result as AuditEntry["result"],
 		duration_ms: row.duration_ms ?? undefined,
+		signature: row.signature ?? undefined,
 	};
 }
 
@@ -134,6 +138,7 @@ export class AuditLogger {
 				entry.duration_ms ?? null,
 				prevHash,
 				entryHash,
+				entry.signature ?? null,
 			);
 		});
 
@@ -163,12 +168,12 @@ export class AuditLogger {
 		return rows.map(rowToEntry);
 	}
 
-	verifyChain(): ChainVerification {
+	verifyChain(publicKey?: Buffer): ChainVerification {
 		const db = this.getDb();
 		// Select ALL fields included in computeEntryHash to ensure tamper detection
 		const rows = db
 			.prepare(
-				"SELECT id, timestamp, manifest_id, session_id, agent_id, tool, category, decision, parameters_summary, result, prev_hash, entry_hash FROM audit_log ORDER BY rowid ASC",
+				"SELECT id, timestamp, manifest_id, session_id, agent_id, tool, category, decision, parameters_summary, result, prev_hash, entry_hash, signature FROM audit_log ORDER BY rowid ASC",
 			)
 			.all() as Array<{
 			id: string;
@@ -183,6 +188,7 @@ export class AuditLogger {
 			result: string;
 			prev_hash: string;
 			entry_hash: string;
+			signature: string | null;
 		}>;
 
 		let expectedPrevHash = "";
@@ -198,6 +204,7 @@ export class AuditLogger {
 				decision: row.decision as AuditEntry["decision"],
 				parameters_summary: row.parameters_summary,
 				result: row.result as AuditEntry["result"],
+				signature: row.signature ?? undefined,
 			};
 
 			if (row.prev_hash !== expectedPrevHash) {
@@ -207,6 +214,20 @@ export class AuditLogger {
 			const expectedHash = computeEntryHash(entry, row.prev_hash);
 			if (row.entry_hash !== expectedHash) {
 				return { valid: false, brokenAt: row.id };
+			}
+
+			// Verify Ed25519 signature when present and public key provided
+			if (row.signature && publicKey) {
+				const key = createPublicKey({ key: publicKey, format: "der", type: "spki" });
+				const valid = cryptoVerify(
+					null,
+					Buffer.from(row.entry_hash),
+					key,
+					Buffer.from(row.signature, "hex"),
+				);
+				if (!valid) {
+					return { valid: false, brokenAt: row.id };
+				}
 			}
 
 			expectedPrevHash = row.entry_hash;
@@ -233,9 +254,13 @@ export class AuditLogger {
 			if (!columnNames.includes("entry_hash")) {
 				db.exec("ALTER TABLE audit_log ADD COLUMN entry_hash TEXT NOT NULL DEFAULT ''");
 			}
+			// SENTINEL: migrate for Ed25519 manifest signing (Wave 2.1)
+			if (!columnNames.includes("signature")) {
+				db.exec("ALTER TABLE audit_log ADD COLUMN signature TEXT");
+			}
 		} catch (migrationError) {
 			throw new Error(
-				`Failed to migrate audit_log for Merkle hash-chain columns: ${migrationError instanceof Error ? migrationError.message : String(migrationError)}`,
+				`Failed to migrate audit_log columns: ${migrationError instanceof Error ? migrationError.message : String(migrationError)}`,
 			);
 		}
 	}

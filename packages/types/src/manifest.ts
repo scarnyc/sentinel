@@ -5,7 +5,7 @@ export const BUILTIN_TOOLS = ["bash", "read_file", "write_file", "edit_file"] as
 export const BuiltinToolNameSchema = z.enum(BUILTIN_TOOLS);
 export type BuiltinToolName = z.infer<typeof BuiltinToolNameSchema>;
 
-export const ActionCategorySchema = z.enum(["read", "write", "dangerous"]);
+export const ActionCategorySchema = z.enum(["read", "write", "write-irreversible", "dangerous"]);
 export type ActionCategory = z.infer<typeof ActionCategorySchema>;
 
 export const ActionManifestSchema = z.object({
@@ -22,6 +22,7 @@ export const ActionManifestSchema = z.object({
 	category: ActionCategorySchema.optional(),
 	sessionId: z.string().min(1),
 	agentId: z.string().min(1),
+	signature: z.string().optional(),
 });
 export type ActionManifest = z.infer<typeof ActionManifestSchema>;
 

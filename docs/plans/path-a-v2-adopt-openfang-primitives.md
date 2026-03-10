@@ -111,18 +111,15 @@ Honest limitation:
 | `delegate.code` manifest + CLI handler | OpenClaw proposes coding task → Sentinel confirms → CLI spawns Claude Code in worktree | 3 days |
 | Heartbeat scheduled task | Every 5 min: checks if Claude Code sessions alive, restarts dead ones, notifies on PR creation | 2 days |
 | Nightly consolidation task | 2 AM cron: reviews audit log, extracts learnings, updates claude-mem | 1 day |
-| Agent roster deployment | 16 agents, 4 sensitivity tiers (Normal/High/Critical) | 3 days |
 | System prompt authoring (soul.md) | Write agent system prompts using Claude/Claude Code best practices — reference Anthropic's `soul.md` and constitutional AI principles for tone, safety boundaries, role definition, and behavioral constraints per sensitivity tier | 2 days |
-| Per-agent MCP scope restrictions | Job agent only sees "Job Search" emails | 3 days |
 | Irreversible action classification | Send email / calendar invite = higher confirmation threshold | 2 days |
 | Email prompt injection defense | All email bodies treated as untrusted input | 2 days |
 | Ed25519 manifest signing | Non-repudiation for audit trail forensics | 2 hr |
-| Capability inheritance | Child agents can't exceed parent capabilities | 2 hr |
 | Context budget enforcement | Per-result 30% cap, global 75% cap | 2 hr |
 | Tool recursion depth limiting | Max depth 5 for agent-to-agent calls | 30 min |
-| sqlite-vec integration | Embedding model selection, `vec0` table schema, hybrid FTS5+vec0 query strategy, embedding pipeline at observation write time | 3 days |
 | Plano model routing | GPT latest + fallbacks to Claude Opus, Gemini Flash Lite 3.1; route by task complexity/cost | 2 days |
 | Prompt caching (all 3 providers) | Enable prompt caching with Anthropic (cache_control), OpenAI (automatic), and Gemini (cachedContent) — reduce latency + cost for repeated system/tool prompts via LLM proxy | 1 day |
+| Promptfoo for evals and red teaming (pen testing, adversarial attacks): https://github.com/promptfoo/promptfoo#readme | 1 day
 | Google Model Armor evaluation | Test free tier, evaluate cloud-grade injection detection vs. local Sentinel controls, measure latency impact on LLM proxy | 4 hr |
 
 **OpenClaw → Claude Code delegation flow:**
@@ -235,12 +232,16 @@ OpenClaw Agent ← completion signal ← reviews PR
 
 | Task | What It Does |
 |------|-------------|
+| Agent roster deployment | 16 agents, 4 sensitivity tiers (Normal/High/Critical) | 3 days |
+| Per-agent MCP scope restrictions | Job agent only sees "Job Search" emails | 3 days |
 | Domain-scoped memory isolation | Health ≠ financial ≠ legal memory partitions |
+| Capability inheritance | Child agents can't exceed parent capabilities | 2 hr |
 | Financial transaction safety | Amount thresholds, cooling periods |
 | Outbound data classification | Scrub PII from agent-generated emails/posts |
 | Taint tracking (compile-time) | `Tainted<T>` / `Clean<T>` branded types |
 | Audit log encryption at rest | SQLite with sensitive data is itself a target |
 | RBAC capability gates | 4-tier role hierarchy (Viewer/User/Admin/Owner) |
+| Posthog for app analytics: https://posthog.com/ | 1 day
 | Session repair | 7-phase message history validation |
 | CopilotKit / ag-ui frontend | Replace TUI confirmation with rich web UI — ag-ui for streaming agent state, CopilotKit for generative UI | Evaluate |
 | UCP integration | Unified context protocol via ag-ui + CopilotKit for cross-agent context sharing | Evaluate |

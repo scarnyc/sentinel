@@ -171,7 +171,8 @@ function classifySingleCommand(command: string): ActionCategory {
 const CATEGORY_ORDER: Record<ActionCategory, number> = {
 	read: 0,
 	write: 1,
-	dangerous: 2,
+	"write-irreversible": 2,
+	dangerous: 3,
 };
 
 function maxCategory(a: ActionCategory, b: ActionCategory): ActionCategory {

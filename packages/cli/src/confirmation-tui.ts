@@ -34,8 +34,13 @@ export function formatConfirmationPrompt(req: PendingConfirmation): string {
 		`${chalk.bold("Tool:")}     ${req.tool}`,
 		`${chalk.bold("Category:")} ${req.category}`,
 		`${chalk.bold("Reason:")}   ${req.reason}`,
-		chalk.bold("Parameters:"),
 	];
+
+	if (req.category === "write-irreversible") {
+		lines.push(chalk.red.bold("⚠  THIS ACTION CANNOT BE UNDONE"));
+	}
+
+	lines.push(chalk.bold("Parameters:"));
 
 	for (const [key, value] of Object.entries(req.parameters)) {
 		const display = typeof value === "string" ? value : JSON.stringify(value);

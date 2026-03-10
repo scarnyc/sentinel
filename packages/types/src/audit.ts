@@ -22,5 +22,6 @@ export const AuditEntrySchema = z.object({
 	duration_ms: z.number().nonnegative().optional(),
 	sessionId: z.string().min(1),
 	agentId: z.string().min(1),
+	signature: z.string().optional(),
 });
 export type AuditEntry = z.infer<typeof AuditEntrySchema>;

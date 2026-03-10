@@ -191,4 +191,77 @@ describe("classify", () => {
 			expect(dangerousResult.reason).toContain("Dangerous");
 		});
 	});
+
+	describe("write-irreversible classification", () => {
+		it("classifies gws gmail send as write-irreversible", () => {
+			const result = classify(
+				makeManifest("gws", {
+					service: "gmail",
+					method: "users.messages.send",
+					body: "Hello",
+				}),
+				config,
+			);
+			expect(result.category).toBe("write-irreversible");
+			expect(result.action).toBe("confirm");
+			expect(result.reason).toContain("irreversible");
+		});
+
+		it("classifies calendar invite with attendees as write-irreversible", () => {
+			const result = classify(
+				makeManifest("gws", {
+					service: "calendar",
+					method: "events.insert",
+					attendees: [{ email: "alice@example.com" }],
+				}),
+				config,
+			);
+			expect(result.category).toBe("write-irreversible");
+			expect(result.action).toBe("confirm");
+			expect(result.reason).toContain("irreversible");
+		});
+
+		it("classifies calendar event without attendees as write (not irreversible)", () => {
+			const result = classify(
+				makeManifest("gws", {
+					service: "calendar",
+					method: "events.insert",
+				}),
+				config,
+			);
+			expect(result.category).not.toBe("write-irreversible");
+		});
+
+		it("write-irreversible never auto-approves even with autoApproveReadOps", () => {
+			const autoConfig: SentinelConfig = {
+				...config,
+				autoApproveReadOps: true,
+			};
+			const result = classify(
+				makeManifest("gws", {
+					service: "gmail",
+					method: "users.messages.send",
+				}),
+				autoConfig,
+			);
+			expect(result.category).toBe("write-irreversible");
+			expect(result.action).toBe("confirm");
+		});
+
+		it("supports config-driven write-irreversible classification", () => {
+			const customConfig: SentinelConfig = {
+				...config,
+				classifications: [
+					{
+						tool: "payment_gateway",
+						defaultCategory: "write-irreversible",
+					},
+				],
+			};
+			const result = classify(makeManifest("payment_gateway", { amount: 100 }), customConfig);
+			expect(result.category).toBe("write-irreversible");
+			expect(result.action).toBe("confirm");
+			expect(result.reason).toContain("irreversible");
+		});
+	});
 });
