@@ -33,16 +33,16 @@ Other spike findings:
 ```
 Wave 2.1: Security Primitives          (~2.5 days)
     ↓
-Wave 2.2: Google Workspace + Email     (~1.5 weeks)
+Wave 2.2: Google Workspace CLI + Email     (~1 week)
     ↓
 Wave 2.3: OpenClaw + Sentinel          (~3-3.5 weeks)
     ↓
 Wave 2.4: LLM Infrastructure           (~4.5 days)
 ```
 
-Total: ~6-7 weeks. Each wave has an OWASP gate review before proceeding.
+Total: ~5.5-6.5 weeks. Each wave has an OWASP gate review before proceeding.
 
-### Deferred to Phase 3
+### Deferred to Phases 2.5 & 3
 - PostHog analytics
 - Capability inheritance (child agents can't exceed parent)
 - Claude Code integration (Phase 2.5 in roadmap): MCP proxy server, PreToolUse/PostToolUse hook scripts, Claude Code scope config, integration tests for hooks → executor → audit pipeline. These remain in the roadmap at `docs/plans/path-a-v2-adopt-openfang-primitives.md` §Phase 2.5 but are explicitly deferred — the `/classify` and `/filter-output` endpoints built in Wave 2.3 are prerequisites that make Phase 2.5 faster when we get there.
@@ -123,52 +123,61 @@ Confirmation TUI shows warning: "This action cannot be undone"
 
 ---
 
-## Wave 2.2: Google Workspace CLI + Email Defense (~1.5 weeks)
+## Wave 2.2: Google Workspace CLI + Email Defense (~1 week)
 
-**Goal**: Add real-world service tools and harden the email attack surface.
+**Goal**: Add real-world service tools via Google Workspace CLI (`gws`) and harden the email attack surface.
 
 | Task | What It Does | LOE |
 |------|-------------|-----|
-| Google Workspace CLI integration | Gmail, Calendar, Drive as executor tool handlers. OAuth2 credentials stored in vault. All calls go through existing guard pipeline. | 1 week |
+| Google Workspace CLI integration | Install `gws` CLI, create Sentinel tool handler wrapping `gws` commands, configure auth, classify by service+method | 3 days |
 | Email prompt injection defense | Email bodies treated as untrusted input. Scanner detects hidden text, encoding tricks, instruction override attempts. | 2 days |
 
-### Google Workspace Integration Design
+### Google Workspace CLI Integration Design
 
-Google Workspace tools are registered as executor tool handlers (same pattern as `bash.ts`, `read-file.ts`). They are NOT MCP servers — they're native Sentinel tools that call Google APIs directly.
+We use [`@googleworkspace/cli`](https://github.com/googleworkspace/cli) (`gws`) — a Rust binary available via npm that wraps ALL Google Workspace APIs (Gmail, Calendar, Drive, Sheets, Docs, Chat, Admin) via Google's Discovery Service. This is vastly simpler than writing per-service API handlers.
+
+**Why `gws` CLI instead of native Google API handlers:**
+- **One tool covers everything** — Gmail, Calendar, Drive, Sheets, Docs, Chat, Admin, and any new Google API automatically (auto-discovers via Google Discovery Service)
+- **Built-in credential management** — AES-256-GCM encrypted in OS keyring via `gws auth setup`
+- **OpenClaw agent skills** — 100+ `SKILL.md` files for LLM integration, symlink to `~/.openclaw/skills/`
+- **`--sanitize` flag** — built-in Google Model Armor prompt injection detection
+- **Structured JSON output** — easy to parse and filter through Sentinel's pipeline
+- **No Google API client library deps** — single binary, no `googleapis` npm package
 
 ```
-Agent → ActionManifest { tool: "gmail.send", params: {...} }
+Agent → ActionManifest { tool: "gws", params: { service: "gmail", method: "users.messages.send", args: {...} } }
     ↓
 Executor guard pipeline (classify → rate limit → loop guard → confirm)
     ↓
-Gmail tool handler → Google API (OAuth2, credentials from vault)
+GWS tool handler → spawns `gws gmail users.messages.send --json '...'`
     ↓
-Output filters (credential filter → PII scrub → audit)
+Output filters (credential filter → PII scrub → email injection scan → audit)
     ↓
 Sanitized result → Agent
 ```
 
-**Tool handlers** (new files in `packages/executor/src/tools/`):
-- `gmail.ts` — `gmail.list`, `gmail.read`, `gmail.send`, `gmail.search`
-- `calendar.ts` — `calendar.list`, `calendar.create`, `calendar.update`, `calendar.delete`
-- `drive.ts` — `drive.list`, `drive.read`, `drive.upload`
+**Tool handler**: Single file `packages/executor/src/tools/gws.ts` (~100 LOC, same pattern as `bash.ts`). Wraps `gws` CLI commands with:
+- Service + method extraction from params
+- JSON argument serialization (`--json` / `--params`)
+- Structured JSON output parsing
+- Output truncation (same limits as bash: 50KB)
 
-**Classification**:
-- `gmail.list`, `gmail.read`, `gmail.search` → `read` (auto-approve)
-- `gmail.send` → `write-irreversible` (always confirm)
-- `calendar.list` → `read`
-- `calendar.create` with attendees → `write-irreversible`
-- `calendar.create` without attendees → `write`
-- `drive.list`, `drive.read` → `read`
-- `drive.upload` → `write`
+**Classification** (based on service + method pattern matching in `packages/policy/src/classifier.ts`):
 
-**Credential storage**: Google OAuth2 tokens stored in vault alongside API keys. `sentinel init` wizard gets a Google Workspace section.
+| Pattern | Category | Examples |
+|---------|----------|---------|
+| `*.list`, `*.get`, `*.search` | `read` | `gws gmail users.messages.list`, `gws drive files.list` |
+| `*.send`, `*.create` (with recipients/attendees) | `write-irreversible` | `gws gmail users.messages.send`, `gws calendar events.insert` with attendees |
+| `*.create`, `*.update`, `*.patch` | `write` | `gws drive files.create`, `gws sheets spreadsheets.create` |
+| `*.delete`, `*.trash` | `dangerous` | `gws drive files.delete` |
 
-**Why not MCP**: Sentinel's executor already has a guard pipeline that all tools pass through. Using native tool handlers means Gmail/Calendar/Drive get the full 8-stage pipeline (classify, rate limit, loop guard, confirm, execute, credential filter, PII scrub, audit) automatically. MCP would add an unnecessary indirection layer.
+**Credential management**: `gws` handles its own OAuth2 credentials (encrypted in OS keyring via `gws auth setup`). Sentinel does NOT store Google credentials in its vault — this is intentional separation. `gws` manages Google auth, Sentinel manages LLM provider auth.
+
+**Setup**: `npm install -g @googleworkspace/cli && gws auth setup` (one-time, interactive OAuth flow).
 
 ### Email Prompt Injection Defense Design
 
-All email content (subject, body, headers) is treated as untrusted input. A dedicated scanner runs before email content enters the agent's context.
+All email content (subject, body, headers) is treated as untrusted input. A dedicated scanner runs on `gws` output when the service is `gmail` and the method is a read operation.
 
 **Detection patterns**:
 - Hidden text (white-on-white CSS, zero-width characters, HTML comments with instructions)
@@ -176,12 +185,12 @@ All email content (subject, body, headers) is treated as untrusted input. A dedi
 - Instruction override attempts ("ignore previous instructions", "system:", role injection)
 - SMTP header injection (newline injection in To/CC/BCC fields)
 
-**Scanner placement**: Post-execution filter in `gmail.read` and `gmail.search` handlers. Fires BEFORE output reaches agent context.
+**Scanner placement**: Post-execution filter in the `gws` tool handler, triggered when `service === "gmail"` and method is a read operation. Fires BEFORE output reaches agent context.
 
 ```
-Gmail API response
+gws gmail users.messages.get → JSON output
     ↓
-Email injection scanner (flag suspicious patterns)
+Email injection scanner (flag suspicious patterns in body/subject)
     ↓
 Standard output filters (credential + PII)
     ↓
@@ -195,27 +204,33 @@ Sanitized result → Agent
 - `warn`: Flagged but content passes through, logged to audit
 - `off`: No scanning
 
+**Defense-in-depth with `gws --sanitize`**: The `gws` CLI has built-in Model Armor integration. When enabled, `gws` sends LLM-bound content through Google Model Armor before returning it. This complements Sentinel's local email scanner — Model Armor catches ML-detected injection patterns, Sentinel catches regex-based patterns.
+
 **Files**:
-- `packages/executor/src/moderation/email-scanner.ts` (new, ~80 LOC)
-- `packages/executor/src/tools/gmail.ts` — wire scanner in read/search handlers
+- `packages/executor/src/tools/gws.ts` (new, ~100 LOC) — wraps `gws` CLI with service/method parsing and classification
+- `packages/executor/src/moderation/email-scanner.ts` (new, ~80 LOC) — email-specific injection detection
+- `packages/policy/src/classifier.ts` — add `gws` service+method classification rules
 - `packages/types/src/credential-patterns.ts` — add Google OAuth token patterns (`ya29.*`, refresh tokens) to credential detection
 
-### Wave 2.2 Tests (~50 tests)
-- Gmail CRUD operations (list, read, send, search) with mock Google API
-- Calendar CRUD with attendee detection
-- Drive read/upload
-- OAuth2 token refresh flow
-- Email injection: hidden text detected
+### Wave 2.2 Tests (~35 tests)
+- `gws` tool handler: service + method extraction from params
+- `gws` tool handler: JSON output parsing
+- `gws` tool handler: output truncation at 50KB
+- Classification: `gmail users.messages.list` → `read`
+- Classification: `gmail users.messages.send` → `write-irreversible`
+- Classification: `calendar events.insert` with attendees → `write-irreversible`
+- Classification: `drive files.delete` → `dangerous`
+- Email injection: hidden text detected in gmail response
 - Email injection: base64 instructions detected
 - Email injection: "ignore previous instructions" flagged
 - Email injection: SMTP header injection blocked
 - Email injection: false negative rate on legitimate emails
-- All Google tools go through guard pipeline (rate limit, loop guard, audit)
-- Gmail send classified as `write-irreversible`
-- Credential filter strips Google OAuth tokens from responses
+- All `gws` commands go through guard pipeline (rate limit, loop guard, audit)
+- Credential filter strips Google OAuth tokens (`ya29.*`) from responses
+- `gws` errors return structured error to agent (not raw stderr)
 
 ### Cross-Wave Note
-These Google Workspace tools will be consumable by OpenClaw agents in Wave 2.3 — the Sentinel plugin exposes them via `before_tool_call`/`after_tool_call` hooks. The tool handlers themselves don't change.
+OpenClaw in Wave 2.3 consumes `gws` tools in two ways: (1) via Sentinel plugin `before_tool_call` hooks when agents call `gws` through the executor, and (2) via native OpenClaw skills symlinked from `gws` agent skills (`npx skills add`). Both paths are secured — path 1 through the executor pipeline, path 2 through the plugin hooks.
 
 ---
 
@@ -553,11 +568,12 @@ Each wave ends with verification before proceeding:
 - [ ] ~10 new tests passing
 
 ### Wave 2.2 Complete When:
-- [ ] Gmail, Calendar, Drive tools functional via executor
-- [ ] All Google tools go through full guard pipeline
+- [ ] `gws` CLI installed and `gws auth setup` complete
+- [ ] `gws` tool handler wraps CLI commands with service+method classification
+- [ ] All `gws` commands go through full guard pipeline
 - [ ] Email injection scanner detects hidden text + encoding tricks
-- [ ] OAuth2 credentials stored in vault (not env vars)
-- [ ] ~50 new tests passing
+- [ ] `gws` credentials managed by CLI (OS keyring), not Sentinel vault
+- [ ] ~35 new tests passing
 
 ### Wave 2.3 Complete When:
 - [ ] OpenClaw Gateway runs alongside Sentinel executor
@@ -578,8 +594,8 @@ Each wave ends with verification before proceeding:
 - [ ] ~25 new tests passing
 
 ### Phase 2 Total:
-- ~135 new tests (677+ total)
-- ~1,200 new LOC (excluding soul.md and config)
+- ~120 new tests (662+ total)
+- ~1,000 new LOC (excluding soul.md and config) — reduced by `gws` CLI wrapper replacing 3 native API handlers
 - All 4 OWASP gate reviews documented
 
 ---
