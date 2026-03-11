@@ -1,4 +1,4 @@
-import { GWS_READ_PATTERNS, type ToolResult } from "@sentinel/types";
+import { GWS_READ_PATTERNS, type GwsAgentScopes, type ToolResult } from "@sentinel/types";
 import { execa } from "execa";
 import { moderateEmail } from "../moderation/email-scanner.js";
 import { truncateBashOutput } from "../output-truncation.js";
@@ -29,8 +29,36 @@ export interface GwsParams {
 	sanitize?: boolean;
 }
 
-export async function executeGws(params: GwsParams, manifestId: string): Promise<ToolResult> {
+export type { GwsAgentScopes } from "@sentinel/types";
+
+export async function executeGws(
+	params: GwsParams,
+	manifestId: string,
+	agentId?: string,
+	scopes?: GwsAgentScopes,
+): Promise<ToolResult> {
 	const start = Date.now();
+
+	// SENTINEL: Per-agent scope restriction (G4)
+	if (agentId && scopes?.[agentId]) {
+		const agentScope = scopes[agentId];
+		if (agentScope.denyServices?.includes(params.service)) {
+			return {
+				manifestId,
+				success: false,
+				error: `Agent not authorized for service: ${params.service}`,
+				duration_ms: Date.now() - start,
+			};
+		}
+		if (agentScope.allowedServices && !agentScope.allowedServices.includes(params.service)) {
+			return {
+				manifestId,
+				success: false,
+				error: `Agent not authorized for service: ${params.service}`,
+				duration_ms: Date.now() - start,
+			};
+		}
+	}
 
 	const cliArgs = [params.service, params.method];
 

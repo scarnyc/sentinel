@@ -4,8 +4,8 @@
  *
  * Mode controlled by SENTINEL_MODERATION_MODE env var:
  * - "enforce": flagged content is blocked (fail-closed)
- * - "warn": flagged content is logged but not blocked (async, non-blocking)
- * - "off": scanning disabled entirely (default for local dev)
+ * - "warn": flagged content is logged but not blocked (default)
+ * - "off": scanning disabled entirely (set SENTINEL_MODERATION_MODE=off to disable)
  */
 
 export type ModerationMode = "enforce" | "warn" | "off";
@@ -51,8 +51,8 @@ export function scanContent(text: string): ScanResult {
 
 export function getModerationMode(): ModerationMode {
 	const mode = process.env.SENTINEL_MODERATION_MODE;
-	if (mode === "enforce" || mode === "warn") return mode;
-	return "off";
+	if (mode === "enforce" || mode === "off") return mode;
+	return "warn";
 }
 
 export interface ModerationResult {
