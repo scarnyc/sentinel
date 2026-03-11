@@ -72,21 +72,36 @@ const GMAIL_SEND_PATTERNS = /\b(send|drafts\.send)\b/;
 /** Calendar create/insert method patterns */
 const CALENDAR_CREATE_PATTERNS = /\b(insert|create)\b/;
 
+/** Delete/trash method patterns — classified as dangerous */
+const GWS_DELETE_PATTERNS = /\b(delete|trash|remove)\b/;
+
+/** Read method patterns — classified as read */
+const GWS_READ_PATTERNS = /\b(list|get|search|watch)\b/;
+
+/** Write method patterns — classified as write */
+const GWS_WRITE_PATTERNS = /\b(create|insert|update|patch|modify|copy)\b/;
+
 function classifyGwsTool(parameters: Record<string, unknown>): ActionCategory | null {
 	const service = typeof parameters.service === "string" ? parameters.service : "";
 	const method = typeof parameters.method === "string" ? parameters.method : "";
 
-	if (service === "gmail" && GMAIL_SEND_PATTERNS.test(method)) {
-		return "write-irreversible";
-	}
-
+	// Tier 1: Irreversible (send, create-with-recipients)
+	if (service === "gmail" && GMAIL_SEND_PATTERNS.test(method)) return "write-irreversible";
 	if (service === "calendar" && CALENDAR_CREATE_PATTERNS.test(method)) {
-		// Only irreversible if attendees are present (sends invite)
 		const attendees = parameters.attendees;
 		if (Array.isArray(attendees) && attendees.length > 0) {
 			return "write-irreversible";
 		}
 	}
+
+	// Tier 2: Dangerous (delete, trash, remove)
+	if (GWS_DELETE_PATTERNS.test(method)) return "dangerous";
+
+	// Tier 3: Read (list, get, search, watch)
+	if (GWS_READ_PATTERNS.test(method)) return "read";
+
+	// Tier 4: Write (create, insert, update, patch, modify, copy — fallback)
+	if (GWS_WRITE_PATTERNS.test(method)) return "write";
 
 	return null;
 }
