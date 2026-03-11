@@ -316,3 +316,10 @@ Defined in `.claude/settings.json` — includes test, lint, and typecheck comman
 - [ ] Moltworkers CF deployment: (https://blog.cloudflare.com/moltworker-self-hosted-ai-agent/) | (https://github.com/cloudflare/moltworker)
 - See `docs/plans/path-a-v2-adopt-openfang-primitives.md` §Phase 2 for security gaps and agent roster.
 - See openclaw repo: https://github.com/openclaw/openclaw
+
+#### Google Workspace Security References
+- [Work Safer with Google Workspace](https://workspace.google.com/security/)
+- [Google Security Blog: Mitigating Prompt Injection Attacks](https://security.googleblog.com/2025/06/mitigating-prompt-injection-attacks.html)
+- [Google's Approach for Secure AI Agents](https://research.google/pubs/an-introduction-to-googles-approach-for-secure-ai-agents/)
+- [Zero Trust Security](https://workspace.google.com/security/zero-trust/)
+- [Enterprise Security Controls for Gemini in Workspace](https://workspace.google.com/blog/ai-and-machine-learning/enterprise-security-controls-google-workspace-gemini)
