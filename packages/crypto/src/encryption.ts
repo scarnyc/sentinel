@@ -72,7 +72,19 @@ export function decryptToBuffer(
 	}
 }
 
+let decryptWarned = false;
+
+/**
+ * @deprecated Use `decryptToBuffer()` or `useCredential()` instead.
+ * Returns a V8 immutable string that cannot be zeroed from memory.
+ */
 export function decrypt(key: Buffer, iv: string, authTag: string, ciphertext: string): string {
+	if (!decryptWarned) {
+		console.warn(
+			"[sentinel/crypto] decrypt() is deprecated — use decryptToBuffer() or useCredential()",
+		);
+		decryptWarned = true;
+	}
 	const ivBuf = Buffer.from(iv, "base64");
 	const authTagBuf = Buffer.from(authTag, "base64");
 	const ciphertextBuf = Buffer.from(ciphertext, "base64");
