@@ -15,9 +15,7 @@ export class ExecutorClient {
 	private baseUrl: string;
 
 	constructor(baseUrl = "http://127.0.0.1:3141") {
-		let end = baseUrl.length;
-		while (end > 0 && baseUrl[end - 1] === "/") end--;
-		this.baseUrl = end === baseUrl.length ? baseUrl : baseUrl.slice(0, end);
+		this.baseUrl = baseUrl.replace(/\/+$/, "");
 	}
 
 	async execute(manifest: ActionManifest): Promise<ToolResult> {
