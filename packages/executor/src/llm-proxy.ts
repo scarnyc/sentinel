@@ -176,11 +176,29 @@ export function createLlmProxyHandler(vault?: CredentialVault): (c: Context) => 
 				}
 			}
 
-			// SENTINEL: Filter credential patterns from response body before it reaches agent.
-			// Reads full body as text, applies encoding-aware redaction, returns filtered response.
-			// This prevents LLM API error messages from leaking credentials (e.g., "Invalid API key: sk-ant-...").
+			// SENTINEL: Streaming vs non-streaming response handling.
+			// SSE (text/event-stream) responses must pass through unmodified to preserve
+			// token-by-token delivery. Credential filtering for streaming is handled by the
+			// tool-output filter on each tool result. Non-streaming responses are fully
+			// materialized and filtered before reaching the agent.
+			const contentType = upstreamResponse.headers.get("content-type") ?? "";
+			const isStreaming = contentType.includes("text/event-stream");
+
+			if (isStreaming) {
+				return new Response(upstreamResponse.body, {
+					status: upstreamResponse.status,
+					headers: responseHeaders,
+				});
+			}
+
+			// Non-streaming: filter credential patterns from response body.
+			// Prevents LLM API error messages from leaking credentials (e.g., "Invalid API key: sk-ant-...").
 			const rawBody = await upstreamResponse.text();
 			const filteredBody = redactAllCredentialsWithEncoding(rawBody);
+
+			// Remove stale content-length — body size may have changed after redaction.
+			// The Response constructor will compute the correct value.
+			responseHeaders.delete("content-length");
 
 			return new Response(filteredBody, {
 				status: upstreamResponse.status,

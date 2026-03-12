@@ -163,4 +163,41 @@ describe("redactAllCredentialsWithEncoding", () => {
 		const elapsed = Date.now() - start;
 		expect(elapsed).toBeLessThan(100); // Should be well under 100ms
 	});
+
+	describe("URL-decode segment isolation (review fix)", () => {
+		it("preserves non-credential URL-encoded content when credential is in separate segment", () => {
+			// %20 = space, should remain encoded in output except in the credential segment
+			const input = "name=Hello%20World&key=sk%2Dant%2Dabc123%2Dleaked";
+			const result = redactAllCredentialsWithEncoding(input);
+			// Credential segment should be redacted
+			expect(result).toContain("[REDACTED");
+			// The name segment should NOT be decoded to "Hello World"
+			expect(result).toContain("Hello%20World");
+		});
+
+		it("redacts URL-encoded API key segments", () => {
+			const input = "token=%73%6B%2D%61%6E%74%2Dabc123-testkey"; // sk-ant-abc123-testkey
+			const result = redactAllCredentialsWithEncoding(input);
+			expect(result).toContain("[REDACTED");
+		});
+	});
+
+	describe("PEM regex ReDoS hardening", () => {
+		it("does not hang on malformed PEM (no END marker)", () => {
+			// Simulates ReDoS attack: BEGIN marker followed by large content, no END marker
+			const malicious = "-----BEGIN PRIVATE KEY-----\n" + "A".repeat(1000) + "\nno end marker";
+			const start = Date.now();
+			redactAllCredentialsWithEncoding(malicious);
+			const elapsed = Date.now() - start;
+			expect(elapsed).toBeLessThan(500); // Must complete quickly
+		});
+
+		it("still redacts valid PEM keys after hardening", () => {
+			const validPem =
+				"-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----";
+			const result = redactAllCredentialsWithEncoding(validPem);
+			expect(result).not.toContain("MIIEvQ");
+			expect(result).toContain("[REDACTED]");
+		});
+	});
 });

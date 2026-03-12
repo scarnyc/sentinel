@@ -36,7 +36,8 @@ const CREDENTIAL_PATTERNS: readonly RegExp[] = [
 	// Database connection strings
 	/(?:postgres|mysql|mongodb(?:\+srv)?):\/\/[^\s]+/g,
 	// PEM private keys (PKCS#8, RSA, EC, OpenSSH, DSA)
-	/-----BEGIN\s+(?:RSA\s+|EC\s+|OPENSSH\s+|DSA\s+)?PRIVATE KEY-----[\s\S]*?-----END\s+(?:RSA\s+|EC\s+|OPENSSH\s+|DSA\s+)?PRIVATE KEY-----/g,
+	// Bounded to 16KB to prevent unbounded backtracking on malformed input (ReDoS hardening).
+	/-----BEGIN\s+(?:RSA\s+|EC\s+|OPENSSH\s+|DSA\s+)?PRIVATE KEY-----[\s\S]{1,16384}?-----END\s+(?:RSA\s+|EC\s+|OPENSSH\s+|DSA\s+)?PRIVATE KEY-----/g,
 ];
 
 const REDACTED = "[REDACTED]";
@@ -76,6 +77,11 @@ const BASE64_CHUNK_RE = /[A-Za-z0-9+/=]{20,}/g;
 /** Regex detecting percent-encoded hex sequences */
 const PERCENT_ENCODED_RE = /%[0-9A-Fa-f]{2}/;
 
+/** Matches runs of URL-encoded content including surrounding non-encoded chars.
+ * Captures: leading alphanumeric + sequences of %XX with interleaved alphanumeric.
+ * E.g., "sk%2Dant%2Dabc123" matches as one segment so credentials spanning boundaries are caught. */
+const URL_ENCODED_RUN_RE = /[A-Za-z0-9_\-.~+/=]*(?:%[0-9A-Fa-f]{2}[A-Za-z0-9_\-.~+/=]*)+/g;
+
 /**
  * Encoding-aware credential redaction.
  *
@@ -102,16 +108,21 @@ export function redactAllCredentialsWithEncoding(text: string): string {
 		return chunk;
 	});
 
-	// Pass 3: URL-encoded segments
+	// Pass 3: URL-encoded segments — decode individual encoded runs, not the whole string.
+	// This preserves non-credential content in its original encoding while still catching
+	// credentials that are percent-encoded (e.g., sk%2Dant%2Dabc123).
 	if (PERCENT_ENCODED_RE.test(result)) {
-		try {
-			const decoded = decodeURIComponent(result);
-			if (containsCredential(decoded)) {
-				result = redactAllCredentials(decoded);
+		result = result.replace(URL_ENCODED_RUN_RE, (segment) => {
+			try {
+				const decoded = decodeURIComponent(segment);
+				if (containsCredential(decoded)) {
+					return REDACTED_ENCODED;
+				}
+			} catch {
+				// Invalid percent-encoding — leave as-is
 			}
-		} catch {
-			// Invalid percent-encoding — leave as-is
-		}
+			return segment;
+		});
 	}
 
 	return result;

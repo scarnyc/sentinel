@@ -374,6 +374,51 @@ describe("LLM Proxy", () => {
 			const text = await res.text();
 			expect(text).toBe(cleanBody);
 		});
+
+		it("passes through SSE streaming responses without materializing body", async () => {
+			const sseChunks = "data: {\"type\":\"content_block_delta\"}\n\ndata: {\"type\":\"message_stop\"}\n\n";
+			const mockResponse = new Response(sseChunks, {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			});
+			vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(mockResponse);
+
+			const res = await app.request("/proxy/llm/v1/messages", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({}),
+			});
+
+			expect(res.headers.get("content-type")).toBe("text/event-stream");
+			const text = await res.text();
+			expect(text).toBe(sseChunks);
+		});
+
+		it("removes stale content-length after body filtering", async () => {
+			const bodyWithCreds = "Response: sk-ant-abc123-leaked-key-in-error";
+			const mockResponse = new Response(bodyWithCreds, {
+				status: 200,
+				headers: {
+					"content-type": "application/json",
+					"content-length": String(bodyWithCreds.length),
+				},
+			});
+			vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(mockResponse);
+
+			const res = await app.request("/proxy/llm/v1/messages", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({}),
+			});
+
+			const text = await res.text();
+			expect(text).toContain("[REDACTED]");
+			// content-length should not match original (stale) value
+			const cl = res.headers.get("content-length");
+			if (cl) {
+				expect(Number(cl)).toBe(text.length);
+			}
+		});
 	});
 
 	it("returns 502 on fetch error", async () => {
