@@ -81,7 +81,10 @@ mod tests {
 
     #[test]
     fn test_decrypt_invalid_base64() {
-        let key = vec![0u8; 32];
+        let key = derive_key(
+            b"test-invalid-base64-key",
+            b"0123456789abcdef0123456789abcdef",
+        );
         let result = decrypt_blob(&key, "not-base64!!!", "AAAA", "AAAA");
         assert!(result.is_err());
     }
@@ -89,7 +92,10 @@ mod tests {
     #[test]
     fn test_decrypt_wrong_key() {
         // Valid base64 but wrong key should fail decryption
-        let key = vec![0u8; 32];
+        let key = derive_key(
+            b"test-wrong-key",
+            b"0123456789abcdef0123456789abcdef",
+        );
         let iv_b64 = BASE64.encode([0u8; 12]);
         let auth_tag_b64 = BASE64.encode([0u8; 16]);
         let ciphertext_b64 = BASE64.encode([1u8; 32]);
