@@ -171,6 +171,23 @@ describe("LoopGuard", () => {
 		expect(resultB.action).not.toBe("block");
 	});
 
+	it("evicts oldest agent when maxAgents exceeded", () => {
+		const guard = new LoopGuard({ maxAgents: 3 });
+		guard.check("agent-1", "tool", {});
+		guard.check("agent-2", "tool", {});
+		guard.check("agent-3", "tool", {});
+		guard.check("agent-4", "tool", {}); // should evict agent-1
+		// agent-1 has fresh state
+		const result = guard.check("agent-1", "tool", {});
+		expect(result.action).toBe("allow");
+		expect(result.duplicateCount).toBe(1); // fresh start, only 1 call
+	});
+
+	it("throws on maxAgents < 1", () => {
+		expect(() => new LoopGuard({ maxAgents: 0 })).toThrow("maxAgents must be positive");
+		expect(() => new LoopGuard({ maxAgents: -1 })).toThrow("maxAgents must be positive");
+	});
+
 	it("custom thresholds are respected", () => {
 		const guard = new LoopGuard({ warnThreshold: 2, blockThreshold: 3 });
 		guard.check(agentId, tool, params);

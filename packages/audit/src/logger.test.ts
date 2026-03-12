@@ -1,7 +1,9 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { generateKeyPair } from "@sentinel/crypto";
 import type { AuditEntry } from "@sentinel/types";
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { AuditLogger } from "./logger.js";
 
@@ -174,6 +176,60 @@ describe("AuditLogger", () => {
 
 		const results = logger.query({});
 		expect(results[0].duration_ms).toBeUndefined();
+		logger.close();
+	});
+
+	it("rejects unsigned entries in strict mode", () => {
+		const dbPath = makeTempDbPath();
+		const logger = new AuditLogger(dbPath);
+		logger.log(makeEntry());
+		logger.close();
+
+		// Null out signatures to simulate unsigned entries
+		const db = new Database(dbPath);
+		db.prepare("UPDATE audit_log SET signature = NULL").run();
+		db.close();
+
+		const { publicKey } = generateKeyPair();
+		const verifyLogger = new AuditLogger(dbPath);
+		const result = verifyLogger.verifyChain({
+			publicKey,
+			strictSignatures: true,
+		});
+		expect(result.valid).toBe(false);
+		if (!result.valid) {
+			expect(result.brokenAt).toBeDefined();
+		}
+		verifyLogger.close();
+	});
+
+	it("allows unsigned entries without strict mode (backward compat)", () => {
+		const dbPath = makeTempDbPath();
+		const logger = new AuditLogger(dbPath);
+		logger.log(makeEntry());
+		logger.close();
+
+		// Null out signatures to simulate unsigned entries
+		const db = new Database(dbPath);
+		db.prepare("UPDATE audit_log SET signature = NULL").run();
+		db.close();
+
+		const { publicKey } = generateKeyPair();
+		const verifyLogger = new AuditLogger(dbPath);
+		const result = verifyLogger.verifyChain({ publicKey });
+		expect(result.valid).toBe(true);
+		verifyLogger.close();
+	});
+
+	it("verifyChain accepts Buffer argument for backward compat", () => {
+		const dbPath = makeTempDbPath();
+		const logger = new AuditLogger(dbPath);
+		const publicKey = logger.getSigningPublicKey();
+		logger.log(makeEntry());
+
+		// Old API: pass Buffer directly
+		const result = logger.verifyChain(publicKey);
+		expect(result.valid).toBe(true);
 		logger.close();
 	});
 });

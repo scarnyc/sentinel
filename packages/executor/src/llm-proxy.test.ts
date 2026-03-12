@@ -8,7 +8,7 @@ import { createLlmProxyHandler } from "./llm-proxy.js";
 
 // Mock SSRF guard — real DNS resolution is unreliable in tests
 vi.mock("./ssrf-guard.js", () => ({
-	checkSsrf: vi.fn().mockResolvedValue(undefined),
+	checkSsrf: vi.fn().mockResolvedValue({ resolvedIps: ["1.2.3.4"], hostname: "api.anthropic.com" }),
 	SsrfError: class SsrfError extends Error {
 		constructor(message?: string) {
 			super(message ?? "SSRF blocked");

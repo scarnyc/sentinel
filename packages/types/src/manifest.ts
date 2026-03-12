@@ -17,7 +17,14 @@ export const ActionManifestSchema = z.object({
 		.string()
 		.datetime()
 		.default(() => new Date().toISOString()),
-	tool: z.string().min(1),
+	tool: z
+		.string()
+		.min(1)
+		.max(256)
+		.regex(
+			/^[a-zA-Z][a-zA-Z0-9_.-]*$/,
+			"Tool name must start with a letter and contain only alphanumeric, underscore, dot, or hyphen",
+		),
 	parameters: z.record(z.unknown()),
 	category: ActionCategorySchema.optional(),
 	sessionId: z.string().min(1),

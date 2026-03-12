@@ -112,11 +112,65 @@ const DENIED_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
 		pattern: /\bchmod\b.*(-R|--recursive).*777\s+\/(\s|$)/,
 		reason: "Recursive permission change on root denied",
 	},
+	// SENTINEL: Full-path command variants — bypass word boundary (MEDIUM-3)
+	{
+		pattern: new RegExp(
+			`(?:/usr)?/s?bin/(cat|head|tail|less|more|tac|nl|od|xxd|hexdump|base64|strings)\\b.*${SENSITIVE_FILE}`,
+		),
+		reason: "Command reads a sensitive file (full-path bypass)",
+	},
+	{
+		pattern:
+			/(?:\/usr)?\/s?bin\/(cat|head|tail|less|more|tac|nl|od|xxd|hexdump|base64|strings)\b.*\.dev\.vars\b/,
+		reason: "Command reads a sensitive file (full-path bypass)",
+	},
+	{
+		pattern:
+			/(?:\/usr)?\/s?bin\/(cat|head|tail|less|more|tac|nl|od|xxd|hexdump|base64|strings)\b.*\.git\/(config|credentials)\b/,
+		reason: "Command reads a sensitive file (full-path bypass)",
+	},
+	{
+		pattern:
+			/(?:\/usr)?\/s?bin\/(cat|head|tail|less|more|tac|nl|od|xxd|hexdump|base64|strings)\b.*secret/i,
+		reason: "Command reads a sensitive file (full-path bypass)",
+	},
+	{
+		pattern:
+			/(?:\/usr)?\/s?bin\/(cat|head|tail|less|more|tac|nl|od|xxd|hexdump|base64|strings)\b.*credential/i,
+		reason: "Command reads a sensitive file (full-path bypass)",
+	},
+	{
+		pattern:
+			/(?:\/usr)?\/s?bin\/(cat|head|tail|less|more|tac|nl|od|xxd|hexdump|base64|strings)\b.*vault\.enc\b/,
+		reason: "Command reads a sensitive file (full-path bypass)",
+	},
+	// SENTINEL: Pipe-to-shell — command output piped to shell interpreter (MEDIUM-3)
+	{
+		pattern: /\|\s*(sh|bash|zsh|dash|eval)\b/,
+		reason: "Pipe-to-shell execution denied",
+	},
+	// SENTINEL: Base64 decode piped to shell (MEDIUM-3)
+	{
+		pattern: /base64\s+(-d|--decode).*\|\s*(sh|bash|zsh|dash)\b/,
+		reason: "Base64-to-shell execution denied",
+	},
+	// SENTINEL: Full-path curl/wget exfiltration (MEDIUM-3)
+	{
+		pattern: /(?:\/usr)?\/s?bin\/curl\b.*@.*\.(env|pem|key)\b/,
+		reason: "Command exfiltrates a sensitive file (full-path bypass)",
+	},
+	{
+		pattern: /(?:\/usr)?\/s?bin\/curl\b.*-d\b.*\.(env|pem|key)\b/,
+		reason: "Command exfiltrates a sensitive file (full-path bypass)",
+	},
 ];
 
 function isDeniedBashCommand(command: string): string | null {
+	// SENTINEL: Normalize backslash-escaped characters to defeat bypass (MEDIUM-3)
+	const normalized = command.replace(/\\(.)/g, "$1");
+
 	for (const entry of DENIED_PATTERNS) {
-		if (entry.pattern.test(command)) {
+		if (entry.pattern.test(normalized)) {
 			console.warn(`[bash-deny] ${entry.reason}`);
 			return entry.reason;
 		}

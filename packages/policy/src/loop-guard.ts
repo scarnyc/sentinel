@@ -5,6 +5,7 @@ export interface LoopGuardConfig {
 	warnThreshold: number;
 	blockThreshold: number;
 	windowMs: number;
+	maxAgents: number;
 }
 
 export type LoopAction = "allow" | "warn" | "block";
@@ -25,6 +26,7 @@ const DEFAULT_CONFIG: LoopGuardConfig = {
 	warnThreshold: 3,
 	blockThreshold: 5,
 	windowMs: 60_000,
+	maxAgents: 1000,
 };
 
 function stableStringify(obj: unknown): string {
@@ -53,6 +55,9 @@ export class LoopGuard {
 		if (merged.maxHistorySize < 1 || merged.windowMs < 1) {
 			throw new Error("maxHistorySize and windowMs must be positive");
 		}
+		if (merged.maxAgents < 1) {
+			throw new Error("maxAgents must be positive");
+		}
 		this.config = Object.freeze(merged);
 	}
 
@@ -77,6 +82,7 @@ export class LoopGuard {
 
 		// Store updated history
 		this.history.set(agentId, entries);
+		this.evictIfNeeded();
 
 		// Count duplicates of this hash in the window
 		const duplicateCount = entries.filter((e) => e.hash === hash).length;
@@ -94,6 +100,13 @@ export class LoopGuard {
 		}
 
 		return { action, duplicateCount, reason };
+	}
+
+	private evictIfNeeded(): void {
+		while (this.history.size > this.config.maxAgents) {
+			const oldest = this.history.keys().next().value;
+			if (oldest !== undefined) this.history.delete(oldest);
+		}
 	}
 
 	reset(agentId?: string): void {

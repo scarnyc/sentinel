@@ -280,17 +280,30 @@ describe("Merkle hash-chain audit log", () => {
 		logger.close();
 	});
 
-	it("unsigned entries accepted by verifyChain() — backward compat", () => {
+	it("auto-signed entries verified with logger's own public key", () => {
 		const dbPath = makeTempDbPath();
 		const logger = new AuditLogger(dbPath);
-
-		const { publicKey } = generateKeyPair();
 
 		logger.log(makeEntry({ timestamp: "2026-01-01T00:00:00.000Z" }));
 		logger.log(makeEntry({ timestamp: "2026-01-02T00:00:00.000Z" }));
 
-		const result = logger.verifyChain(publicKey);
+		const autoPublicKey = logger.getSigningPublicKey();
+		expect(autoPublicKey).toBeDefined();
+		const result = logger.verifyChain(autoPublicKey!);
 		expect(result.valid).toBe(true);
+		logger.close();
+	});
+
+	it("auto-signed entries fail verification with wrong public key", () => {
+		const dbPath = makeTempDbPath();
+		const logger = new AuditLogger(dbPath);
+
+		const { publicKey: wrongKey } = generateKeyPair();
+
+		logger.log(makeEntry({ timestamp: "2026-01-01T00:00:00.000Z" }));
+
+		const result = logger.verifyChain(wrongKey);
+		expect(result.valid).toBe(false);
 		logger.close();
 	});
 

@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import { AuditLogger } from "@sentinel/audit";
 import { CredentialVault } from "@sentinel/crypto";
 import { getDefaultConfig, validateConfig } from "@sentinel/policy";
+import { ensureDockerAuth } from "./docker-auth.js";
 import { createApp } from "./server.js";
 import { createToolRegistry } from "./tools/index.js";
 
@@ -17,6 +18,7 @@ try {
 	console.error(err instanceof Error ? err.message : String(err));
 	process.exit(1);
 }
+validated = ensureDockerAuth(validated);
 const config = Object.freeze(structuredClone(validated));
 
 const auditLogger = new AuditLogger(config.auditLogPath);
@@ -41,7 +43,11 @@ const registry = createToolRegistry({
 	gwsScopes: config.gwsAgentScopes,
 	vault,
 });
-const app = createApp(config, auditLogger, registry, vault);
+// SENTINEL: Generate HMAC secret for response signing (B4 pen test finding)
+const { randomBytes: generateHmacBytes } = await import("node:crypto");
+const hmacSecret = generateHmacBytes(32);
+
+const app = createApp(config, auditLogger, registry, vault, hmacSecret);
 
 const port = config.executor.port;
 const host = "0.0.0.0";

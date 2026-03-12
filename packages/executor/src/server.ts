@@ -7,6 +7,7 @@ import { z } from "zod";
 import { createAuthMiddleware } from "./auth-middleware.js";
 import { createLlmProxyHandler } from "./llm-proxy.js";
 import { requestIdMiddleware } from "./request-id.js";
+import { createResponseSigner } from "./response-signer.js";
 import {
 	type ConfirmFn,
 	handleExecute,
@@ -43,6 +44,7 @@ export function createApp(
 	auditLogger: AuditLogger,
 	registry: ToolRegistry,
 	vault?: CredentialVault,
+	hmacSecret?: Buffer,
 ): Hono {
 	const app = new Hono();
 	const pendingConfirmations = new Map<string, PendingConfirmation>();
@@ -53,15 +55,73 @@ export function createApp(
 		loopGuard: new LoopGuard(),
 	};
 
+	// SENTINEL: 5-minute auto-deny for unresolved confirmations (LOW-12)
+	const CONFIRMATION_TIMEOUT_MS = 300_000;
+
 	const confirmFn: ConfirmFn = (manifest, decision) => {
 		return new Promise<boolean>((resolve) => {
-			pendingConfirmations.set(manifest.id, { manifest, decision, resolve });
-			// The caller (POST /execute) will wait; POST /confirm/:id resolves it
+			const timeout = setTimeout(() => {
+				pendingConfirmations.delete(manifest.id);
+				resolve(false); // auto-deny
+				console.warn(
+					`[sentinel] Confirmation timeout for ${manifest.id} (${manifest.tool}) — auto-denied after ${CONFIRMATION_TIMEOUT_MS / 1000}s`,
+				);
+			}, CONFIRMATION_TIMEOUT_MS);
+
+			pendingConfirmations.set(manifest.id, {
+				manifest,
+				decision,
+				resolve: (approved: boolean) => {
+					clearTimeout(timeout);
+					resolve(approved);
+				},
+			});
 		});
 	};
 
 	// SENTINEL: request UUID for structured correlation logging (Phase 1)
 	app.use("*", requestIdMiddleware);
+
+	// SENTINEL: Body size limits (LOW-17) — defense-in-depth against DoS
+	// Two-layer enforcement: (1) Content-Length header check for early rejection,
+	// (2) actual body size verification after reading to catch chunked transfer bypass.
+	// Docker mode additionally requires Content-Length to be present.
+	const createBodyLimitMiddleware = (maxBytes: number, label: string) => {
+		return async (c: import("hono").Context, next: import("hono").Next) => {
+			const isBodyMethod =
+				c.req.method === "POST" || c.req.method === "PUT" || c.req.method === "PATCH";
+			const contentLength = c.req.header("content-length");
+
+			// Layer 1: reject early if Content-Length exceeds limit
+			if (contentLength) {
+				if (Number.parseInt(contentLength, 10) > maxBytes) {
+					return c.json({ error: `Request body too large (max ${label})` }, 413);
+				}
+			} else if (process.env.SENTINEL_DOCKER === "true" && isBodyMethod) {
+				// In Docker: require Content-Length to prevent chunked transfer bypass
+				return c.json({ error: "Content-Length header required" }, 411);
+			}
+
+			// Layer 2: verify actual body size for requests without Content-Length
+			// (catches chunked transfer encoding bypass in non-Docker mode)
+			if (isBodyMethod && !contentLength) {
+				const body = await c.req.raw.clone().arrayBuffer();
+				if (body.byteLength > maxBytes) {
+					return c.json({ error: `Request body too large (max ${label})` }, 413);
+				}
+			}
+
+			return next();
+		};
+	};
+	app.use("/execute", createBodyLimitMiddleware(10 * 1024 * 1024, "10MB"));
+	app.use("/proxy/llm/*", createBodyLimitMiddleware(100 * 1024 * 1024, "100MB"));
+
+	// SENTINEL: HMAC-SHA256 response signing for integrity verification (B4)
+	// Placed before routes so all responses (including /health) get signed
+	if (hmacSecret) {
+		app.use("*", createResponseSigner(hmacSecret));
+	}
 
 	app.get("/health", (c) => {
 		return c.json({ status: "ok", version: "0.1.0" });
@@ -71,9 +131,15 @@ export function createApp(
 	// SENTINEL: constant-time bearer token auth (Phase 1 hardening)
 	const authMiddleware = createAuthMiddleware(config.authToken);
 	if (!config.authToken) {
-		console.warn(
-			"[sentinel] WARNING: No authToken configured — executor running without authentication",
-		);
+		if (process.env.SENTINEL_DOCKER === "true") {
+			throw new Error(
+				"[sentinel] FATAL: Docker mode without auth token — refusing to start unauthenticated",
+			);
+		} else {
+			console.warn(
+				"[sentinel] WARNING: No authToken configured — running without authentication (local dev)",
+			);
+		}
 	}
 	app.use("*", async (c, next) => {
 		if (c.req.path === "/health") {

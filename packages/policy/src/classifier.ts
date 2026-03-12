@@ -32,9 +32,20 @@ function matchOverride(condition: string, parameters: Record<string, unknown>): 
 	const reMatch = condition.match(/^(\w+)~(.+)$/);
 	if (reMatch) {
 		const [, key, pattern] = reMatch;
+		// SENTINEL: ReDoS protection — reject patterns > 200 chars (MEDIUM-4)
+		// Fail-safe: apply the override (more restrictive) when pattern is too long to safely evaluate
+		if (pattern.length > 200) {
+			console.warn(
+				`[classifier] ReDoS protection: regex pattern exceeds 200 chars (${pattern.length}), applying override (fail-safe)`,
+			);
+			return true;
+		}
 		try {
 			return new RegExp(pattern).test(String(parameters[key]));
-		} catch {
+		} catch (regexErr) {
+			console.warn(
+				`[classifier] Invalid regex in override: ${regexErr instanceof Error ? regexErr.message : String(regexErr)}`,
+			);
 			return false;
 		}
 	}

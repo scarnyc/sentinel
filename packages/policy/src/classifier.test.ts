@@ -325,6 +325,61 @@ describe("classify", () => {
 		});
 	});
 
+	describe("matchOverride regex safety", () => {
+		it("rejects regex patterns longer than 200 chars in override", () => {
+			const longPattern = "a".repeat(201);
+			const manifest = makeManifest("test", { path: "test" });
+			const customConfig: SentinelConfig = {
+				...config,
+				classifications: [
+					{
+						tool: "test",
+						defaultCategory: "read",
+						overrides: [
+							{
+								condition: `path~${longPattern}`,
+								category: "dangerous",
+								reason: "test override",
+							},
+						],
+					},
+				],
+			};
+			// Long regex should fail-safe (override applies), using the more restrictive category
+			const result = classify(manifest, customConfig);
+			expect(result.category).toBe("dangerous"); // fail-safe: override applies
+		});
+
+		it("allows regex patterns at exactly 200 chars", () => {
+			// Build a 200-char pattern: ".*" (2) + "x"{198} = 200 chars
+			// This matches any string (via .*) so the override will apply
+			const pattern = `.*${"x".repeat(198)}`;
+			expect(pattern.length).toBe(200);
+			const manifest = makeManifest("test", {
+				path: `${"x".repeat(198)}`,
+			});
+			const customConfig: SentinelConfig = {
+				...config,
+				classifications: [
+					{
+						tool: "test",
+						defaultCategory: "read",
+						overrides: [
+							{
+								condition: `path~${pattern}`,
+								category: "dangerous",
+								reason: "test override",
+							},
+						],
+					},
+				],
+			};
+			// 200-char pattern should be allowed and match
+			const result = classify(manifest, customConfig);
+			expect(result.category).toBe("dangerous");
+		});
+	});
+
 	describe("GWS classification rules", () => {
 		it("gmail users.messages.list → read", () => {
 			const result = classify(

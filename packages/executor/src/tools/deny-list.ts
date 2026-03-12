@@ -1,8 +1,8 @@
 import { basename } from "node:path";
 
-const EXTENSION_DENY = [".pem", ".key"];
+const EXTENSION_DENY = [".pem", ".key", ".enc"];
 
-const SUBSTRING_DENY = ["secret", "credential"];
+const SUBSTRING_DENY = ["secret", "credential", "vault"];
 
 export function isDeniedPath(filePath: string): boolean {
 	const normalized = filePath.replace(/\\/g, "/");

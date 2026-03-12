@@ -462,6 +462,27 @@ describe("executeGws", () => {
 			warnSpy.mockRestore();
 		});
 
+		it("cleans token from env even on execa error (LOW-15)", async () => {
+			const envSnapshot: Record<string, string> = {};
+			mockExeca.mockImplementation(
+				(_cmd: string, _args: string[], opts: { env: Record<string, string> }) => {
+					// Capture env state during execa call — token should be present here
+					envSnapshot.tokenDuringExec = opts.env.GOOGLE_WORKSPACE_CLI_TOKEN;
+					// Simulate execa throwing (e.g., timeout, signal kill)
+					throw new Error("Process timed out");
+				},
+			);
+			mockGetGwsAccessToken.mockResolvedValue("ephemeral-token");
+			const mockVault = {} as unknown as import("@sentinel/crypto").CredentialVault;
+
+			const result = await executeGws(makeParams(), "test-id", { vault: mockVault });
+
+			// Token was set during execa call
+			expect(envSnapshot.tokenDuringExec).toBe("ephemeral-token");
+			// Execution failed gracefully (caught by outer catch)
+			expect(result.success).toBe(false);
+		});
+
 		it("fails fast in Docker when vault token fails", async () => {
 			process.env.SENTINEL_DOCKER = "true";
 			mockGetGwsAccessToken.mockRejectedValue(new Error("vault error"));

@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getModerationMode, moderate, scanContent } from "./scanner.js";
 
 afterEach(() => {
 	delete process.env.SENTINEL_MODERATION_MODE;
+	delete process.env.SENTINEL_DOCKER;
 });
 
 describe("scanContent", () => {
@@ -101,23 +102,42 @@ describe("scanContent", () => {
 });
 
 describe("getModerationMode", () => {
-	it("returns 'warn' by default (safe default)", () => {
+	it("defaults to warn in local dev (no Docker)", () => {
 		expect(getModerationMode()).toBe("warn");
 	});
 
-	it("returns 'enforce' when set", () => {
+	it("defaults to enforce in Docker mode", () => {
+		process.env.SENTINEL_DOCKER = "true";
+		expect(getModerationMode()).toBe("enforce");
+	});
+
+	it("returns 'enforce' when explicitly set", () => {
 		process.env.SENTINEL_MODERATION_MODE = "enforce";
 		expect(getModerationMode()).toBe("enforce");
 	});
 
-	it("returns 'warn' when set", () => {
+	it("returns 'warn' when explicitly set", () => {
 		process.env.SENTINEL_MODERATION_MODE = "warn";
 		expect(getModerationMode()).toBe("warn");
 	});
 
-	it("returns 'warn' for invalid values", () => {
-		process.env.SENTINEL_MODERATION_MODE = "invalid";
-		expect(getModerationMode()).toBe("warn");
+	it("warns on unrecognized mode value and falls back to default", () => {
+		process.env.SENTINEL_MODERATION_MODE = "enforc"; // typo
+		const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const mode = getModerationMode();
+		expect(spy).toHaveBeenCalledWith(expect.stringContaining("unrecognized"));
+		expect(mode).toBe("warn"); // local dev default
+		spy.mockRestore();
+	});
+
+	it("warns on unrecognized mode and defaults to enforce in Docker", () => {
+		process.env.SENTINEL_MODERATION_MODE = "enforc";
+		process.env.SENTINEL_DOCKER = "true";
+		const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const mode = getModerationMode();
+		expect(spy).toHaveBeenCalledWith(expect.stringContaining("unrecognized"));
+		expect(mode).toBe("enforce"); // Docker default
+		spy.mockRestore();
 	});
 });
 
