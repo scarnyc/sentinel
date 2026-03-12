@@ -52,7 +52,7 @@ pnpm install
 ```bash
 pnpm install
 pnpm typecheck   # Verify TypeScript
-pnpm test         # Run all tests (542+)
+pnpm test         # Run all tests (583+)
 ```
 
 ### Running locally
@@ -78,6 +78,7 @@ sentinel chat     # Start interactive agent session with TUI confirmation
 | `.claude/skills/security-audit/SKILL.md` | `/security-audit` skill — validates 6 security invariants |
 | `.claude/skills/upstream-sync/SKILL.md` | `/upstream-sync` skill — rebase on moltworker (user-only) |
 | `.rampart/policy.yaml` | Host-level Rampart firewall policy (tfstate, data protection, security code gate) |
+| `.claude/plans/glittery-toasting-teapot.md` | GWS credential security posture assessment (10-layer defense analysis) |
 
 
 ## Architecture
@@ -215,6 +216,21 @@ Four categories with graduated confirmation: `read` (auto-approve configurable),
 - Pre-execute: scans request parameters; post-execute: scans tool output
 - `enforce`: blocked content returns generic error; `warn`: logged but not blocked
 
+### GWS Credential Security
+Google OAuth tokens **never enter Sentinel's memory** — they live in macOS Keychain and are retrieved by the `gws` subprocess directly. The `gws` process runs with `extendEnv: false` (no Sentinel env vars leaked). Even if tokens appeared in stdout, credential filtering (`ya29.*`, `1//...`, `4/...` patterns) strips them before the agent sees output. Full 10-layer defense: network isolation → env stripping → error sanitization → credential filter → PII scrub → per-agent scoping → human confirmation → audit → email injection scanning → content moderation.
+
+**Using real Google credentials requires:**
+1. **Run in Docker** — `docker compose up` ensures `internal: true` network isolation for the agent
+2. **Set executor auth token** — configure `authToken` to prevent unauthorized API access to `:3141`
+3. **Configure per-agent scopes** — restrict agent to only needed GWS services (e.g., Gmail read-only)
+4. **Grant narrow OAuth scopes** — during `gws auth`, approve only minimum permissions
+
+**Known risks:**
+- `gws` CLI binary is unaudited — pin version and checksum binary
+- Local dev without Docker removes network isolation layer (credential filtering still active)
+- Agent ID not cryptographically bound (acceptable for single-agent; requires Ed25519 identity signing before multi-agent)
+- Full security posture assessment: `.claude/plans/glittery-toasting-teapot.md`
+
 ### Testing
 - **Vitest** with V8 coverage; tests colocated as `*.test.ts` next to source
 - **Security tests** are mandatory — each invariant above has a dedicated test
@@ -293,6 +309,7 @@ Defined in `.claude/settings.json` — includes test, lint, and typecheck comman
 - **Worktree dist/ independence** — git worktrees don't share `dist/` with main; workspace deps (e.g., `@sentinel/types`) need manual build in worktree: `npx tsup src/index.ts --format esm`
 - **Rampart blocks `.rampart/` writes** — standard policy `block-sensitive-writes` prevents agent from editing `.rampart/policy.yaml`; policy changes are human-only
 - **Rampart `**` glob quirk** — `**/path` requires ≥1 path segment; always include bare `path` variant alongside `**/path`
+- **Rampart currently disabled** — binary renamed to `/opt/homebrew/bin/rampart.disabled` for testing. Re-enable: `sudo mv /opt/homebrew/bin/rampart.disabled /opt/homebrew/bin/rampart`
 
 
 ## Build Progress
