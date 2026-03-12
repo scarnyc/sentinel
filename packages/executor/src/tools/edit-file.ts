@@ -1,4 +1,5 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open } from "node:fs/promises";
 import type { ToolResult } from "@sentinel/types";
 import { isDeniedPath } from "./deny-list.js";
 import { isPathAllowed } from "./path-guard.js";
@@ -35,8 +36,31 @@ export async function executeEditFile(
 		};
 	}
 
+	// Defense-in-depth: restrict writes to allowed prefix in Docker
+	if (process.env.SENTINEL_DOCKER === "true") {
+		const ALLOWED_WRITE_PREFIX = "/app/data/";
+		if (!guard.resolved.startsWith(ALLOWED_WRITE_PREFIX)) {
+			return {
+				manifestId,
+				success: false,
+				error: "Access denied: writes restricted to /app/data/ in container mode",
+				duration_ms: Date.now() - start,
+			};
+		}
+	}
+
+	// SENTINEL: TOCTOU mitigation — O_NOFOLLOW rejects symlinks atomically at open()
+	// Uses params.path (user-supplied) not guard.resolved, because realpath() already
+	// resolved the symlink — opening guard.resolved would bypass the symlink check.
 	try {
-		const content = await readFile(guard.resolved, "utf-8");
+		// Read with O_NOFOLLOW to reject symlinks at open time
+		const readFd = await open(params.path, constants.O_RDONLY | constants.O_NOFOLLOW);
+		let content: string;
+		try {
+			content = await readFd.readFile("utf-8");
+		} finally {
+			await readFd.close();
+		}
 
 		const occurrences = content.split(params.old_string).length - 1;
 		if (occurrences === 0) {
@@ -57,7 +81,17 @@ export async function executeEditFile(
 		}
 
 		const updated = content.replace(params.old_string, params.new_string);
-		await writeFile(guard.resolved, updated, "utf-8");
+
+		// Write with O_NOFOLLOW to reject symlinks at open time
+		const writeFd = await open(
+			params.path,
+			constants.O_WRONLY | constants.O_TRUNC | constants.O_NOFOLLOW,
+		);
+		try {
+			await writeFd.writeFile(updated, "utf-8");
+		} finally {
+			await writeFd.close();
+		}
 
 		return {
 			manifestId,
@@ -65,11 +99,20 @@ export async function executeEditFile(
 			output: `Edited ${params.path}`,
 			duration_ms: Date.now() - start,
 		};
-	} catch (error) {
+	} catch (err: unknown) {
+		const code = (err as NodeJS.ErrnoException).code;
+		if (code === "ELOOP" || code === "EMLINK") {
+			return {
+				manifestId,
+				success: false,
+				error: "Access denied: cannot edit through symlink (TOCTOU mitigation)",
+				duration_ms: Date.now() - start,
+			};
+		}
 		return {
 			manifestId,
 			success: false,
-			error: error instanceof Error ? error.message : "Unknown error",
+			error: err instanceof Error ? err.message : "Unknown error",
 			duration_ms: Date.now() - start,
 		};
 	}

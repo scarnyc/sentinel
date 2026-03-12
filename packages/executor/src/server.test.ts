@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { AuditLogger } from "@sentinel/audit";
 import type { ActionManifest, SentinelConfig, ToolResult } from "@sentinel/types";
 import type { Hono } from "hono";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "./server.js";
 import { createToolRegistry } from "./tools/index.js";
 import type { ToolRegistry } from "./tools/registry.js";
@@ -298,5 +298,111 @@ describe("GET /pending-confirmations", () => {
 			body: JSON.stringify({ approved: true }),
 		});
 		await executePromise;
+	});
+});
+
+describe("confirmation timeout (LOW-12)", () => {
+	it("auto-denies pending confirmation after timeout", async () => {
+		vi.useFakeTimers();
+
+		const targetPath = join(tempDir, "timeout-test.txt");
+		const manifest = makeManifest({
+			tool: "write_file",
+			parameters: { path: targetPath, content: "data" },
+		});
+
+		// Start execute — will block waiting for confirmation
+		const executePromise = postExecute(app, manifest);
+
+		// Give server a tick to register the pending confirmation
+		await vi.advanceTimersByTimeAsync(50);
+
+		// Verify confirmation is pending
+		const pendingRes = await app.request("/pending-confirmations");
+		const pending = (await pendingRes.json()) as Array<{ manifestId: string }>;
+		expect(pending.length).toBe(1);
+		expect(pending[0].manifestId).toBe(manifest.id);
+
+		// Advance past the 5-minute timeout
+		await vi.advanceTimersByTimeAsync(300_000);
+
+		// Execute should have resolved with denial
+		const res = await executePromise;
+		const result = (await res.json()) as ToolResult;
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("Denied by user");
+
+		// Pending confirmations should be cleared
+		const afterRes = await app.request("/pending-confirmations");
+		const afterPending = (await afterRes.json()) as Array<unknown>;
+		expect(afterPending.length).toBe(0);
+
+		vi.useRealTimers();
+	});
+
+	it("clears timeout when confirmation is resolved manually", async () => {
+		vi.useFakeTimers();
+
+		const targetPath = join(tempDir, "manual-confirm.txt");
+		const manifest = makeManifest({
+			tool: "write_file",
+			parameters: { path: targetPath, content: "data" },
+		});
+
+		const executePromise = postExecute(app, manifest);
+		await vi.advanceTimersByTimeAsync(50);
+
+		// Confirm manually before timeout
+		await app.request(`/confirm/${manifest.id}`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ approved: true }),
+		});
+
+		const res = await executePromise;
+		const result = (await res.json()) as ToolResult;
+		expect(result.success).toBe(true);
+
+		vi.useRealTimers();
+	});
+});
+
+describe("body size limits (LOW-17)", () => {
+	it("rejects /execute with Content-Length > 10MB", async () => {
+		const res = await app.request("/execute", {
+			method: "POST",
+			headers: {
+				"Content-Length": "11000000",
+				"Content-Type": "application/json",
+			},
+			body: "{}",
+		});
+		expect(res.status).toBe(413);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toContain("too large");
+	});
+
+	it("rejects /proxy/llm/* with Content-Length > 100MB", async () => {
+		const res = await app.request("/proxy/llm/v1/messages", {
+			method: "POST",
+			headers: {
+				"Content-Length": "110000000",
+				"Content-Type": "application/json",
+			},
+			body: "{}",
+		});
+		expect(res.status).toBe(413);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toContain("too large");
+	});
+
+	it("allows normal-sized /execute requests", async () => {
+		const manifest = makeManifest({
+			tool: "bash",
+			parameters: { command: "echo size-test" },
+		});
+		const res = await postExecute(app, manifest);
+		// Should not be blocked by body size middleware
+		expect(res.status).not.toBe(413);
 	});
 });

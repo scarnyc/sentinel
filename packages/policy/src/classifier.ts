@@ -32,6 +32,8 @@ function matchOverride(condition: string, parameters: Record<string, unknown>): 
 	const reMatch = condition.match(/^(\w+)~(.+)$/);
 	if (reMatch) {
 		const [, key, pattern] = reMatch;
+		// SENTINEL: ReDoS protection — reject patterns > 200 chars (MEDIUM-4)
+		if (pattern.length > 200) return false;
 		try {
 			return new RegExp(pattern).test(String(parameters[key]));
 		} catch {

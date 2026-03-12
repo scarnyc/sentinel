@@ -337,23 +337,46 @@ export class MemoryStore {
 	}
 
 	writeSummary(rawInput: CreateSummaryInput): string {
-		this.getDb();
+		const db = this.getDb();
 		const input = CreateSummarySchema.parse(rawInput);
-		const id = randomUUID();
-		this.insertSummaryStmt.run(
-			id,
-			input.project,
-			input.source,
-			input.scope,
-			input.periodStart,
-			input.periodEnd,
-			input.title,
-			JSON.stringify(input.investigated),
-			JSON.stringify(input.learned),
-			JSON.stringify(input.completed),
-			JSON.stringify(input.nextSteps),
-			JSON.stringify(input.observationIds),
+
+		// SENTINEL: Quota check — same pattern as observe() (LOW-14)
+		const contentBytes = Buffer.byteLength(
+			JSON.stringify(input.investigated) +
+				JSON.stringify(input.learned) +
+				JSON.stringify(input.completed) +
+				JSON.stringify(input.nextSteps) +
+				input.title,
+			"utf-8",
 		);
+		const currentBytes = this.getStorageBytes();
+		if (currentBytes + contentBytes > this.maxTotalBytes) {
+			throw new MemoryQuotaError(
+				`Storage quota exceeded: ${currentBytes + contentBytes} > ${this.maxTotalBytes} bytes`,
+			);
+		}
+
+		const id = randomUUID();
+
+		const insertTransaction = db.transaction(() => {
+			this.insertSummaryStmt.run(
+				id,
+				input.project,
+				input.source,
+				input.scope,
+				input.periodStart,
+				input.periodEnd,
+				input.title,
+				JSON.stringify(input.investigated),
+				JSON.stringify(input.learned),
+				JSON.stringify(input.completed),
+				JSON.stringify(input.nextSteps),
+				JSON.stringify(input.observationIds),
+			);
+			this.updateStorageStmt.run(contentBytes);
+		});
+
+		insertTransaction();
 		return id;
 	}
 

@@ -7,6 +7,7 @@ import { z } from "zod";
 import { createAuthMiddleware } from "./auth-middleware.js";
 import { createLlmProxyHandler } from "./llm-proxy.js";
 import { requestIdMiddleware } from "./request-id.js";
+import { createResponseSigner } from "./response-signer.js";
 import {
 	type ConfirmFn,
 	handleExecute,
@@ -43,6 +44,7 @@ export function createApp(
 	auditLogger: AuditLogger,
 	registry: ToolRegistry,
 	vault?: CredentialVault,
+	hmacSecret?: Buffer,
 ): Hono {
 	const app = new Hono();
 	const pendingConfirmations = new Map<string, PendingConfirmation>();
@@ -53,15 +55,54 @@ export function createApp(
 		loopGuard: new LoopGuard(),
 	};
 
+	// SENTINEL: 5-minute auto-deny for unresolved confirmations (LOW-12)
+	const CONFIRMATION_TIMEOUT_MS = 300_000;
+
 	const confirmFn: ConfirmFn = (manifest, decision) => {
 		return new Promise<boolean>((resolve) => {
-			pendingConfirmations.set(manifest.id, { manifest, decision, resolve });
-			// The caller (POST /execute) will wait; POST /confirm/:id resolves it
+			const timeout = setTimeout(() => {
+				pendingConfirmations.delete(manifest.id);
+				resolve(false); // auto-deny
+				console.warn(
+					`[sentinel] Confirmation timeout for ${manifest.id} (${manifest.tool}) — auto-denied after ${CONFIRMATION_TIMEOUT_MS / 1000}s`,
+				);
+			}, CONFIRMATION_TIMEOUT_MS);
+
+			pendingConfirmations.set(manifest.id, {
+				manifest,
+				decision,
+				resolve: (approved: boolean) => {
+					clearTimeout(timeout);
+					resolve(approved);
+				},
+			});
 		});
 	};
 
 	// SENTINEL: request UUID for structured correlation logging (Phase 1)
 	app.use("*", requestIdMiddleware);
+
+	// SENTINEL: Body size limits (LOW-17) — defense-in-depth against DoS
+	app.use("/execute", async (c, next) => {
+		const contentLength = c.req.header("content-length");
+		if (contentLength && Number.parseInt(contentLength, 10) > 10 * 1024 * 1024) {
+			return c.json({ error: "Request body too large (max 10MB)" }, 413);
+		}
+		return next();
+	});
+	app.use("/proxy/llm/*", async (c, next) => {
+		const contentLength = c.req.header("content-length");
+		if (contentLength && Number.parseInt(contentLength, 10) > 100 * 1024 * 1024) {
+			return c.json({ error: "Request body too large (max 100MB)" }, 413);
+		}
+		return next();
+	});
+
+	// SENTINEL: HMAC-SHA256 response signing for integrity verification (B4)
+	// Placed before routes so all responses (including /health) get signed
+	if (hmacSecret) {
+		app.use("*", createResponseSigner(hmacSecret));
+	}
 
 	app.get("/health", (c) => {
 		return c.json({ status: "ok", version: "0.1.0" });
@@ -71,9 +112,13 @@ export function createApp(
 	// SENTINEL: constant-time bearer token auth (Phase 1 hardening)
 	const authMiddleware = createAuthMiddleware(config.authToken);
 	if (!config.authToken) {
-		console.warn(
-			"[sentinel] WARNING: No authToken configured — executor running without authentication",
-		);
+		if (process.env.SENTINEL_DOCKER === "true") {
+			console.error("[sentinel] CRITICAL: Docker mode without auth token — this should not happen");
+		} else {
+			console.warn(
+				"[sentinel] WARNING: No authToken configured — running without authentication (local dev)",
+			);
+		}
 	}
 	app.use("*", async (c, next) => {
 		if (c.req.path === "/health") {

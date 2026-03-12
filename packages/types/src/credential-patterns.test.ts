@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { redactAllCredentials, redactAllCredentialsWithEncoding } from "./credential-patterns.js";
+import {
+	containsCredential,
+	recursiveContainsCredential,
+	redactAllCredentials,
+	redactAllCredentialsWithEncoding,
+} from "./credential-patterns.js";
 
 describe("redactAllCredentials", () => {
 	describe("Google OAuth patterns", () => {
@@ -199,5 +204,131 @@ describe("redactAllCredentialsWithEncoding", () => {
 			expect(result).not.toContain("MIIEvQ");
 			expect(result).toContain("[REDACTED]");
 		});
+	});
+});
+
+describe("recursiveContainsCredential", () => {
+	it("detects base64(base64(credential))", () => {
+		const credential = "sk-ant-abc123-testkey-for-encoding";
+		const singleEncoded = Buffer.from(credential).toString("base64");
+		const doubleEncoded = Buffer.from(singleEncoded).toString("base64");
+		expect(recursiveContainsCredential(doubleEncoded)).toBe(true);
+	});
+
+	it("detects urlencode(base64(credential))", () => {
+		const credential = "ya29.a0ARrdaM8_Wn3EfCnXoP_abc123-def456";
+		const base64Encoded = Buffer.from(credential).toString("base64");
+		const urlEncoded = encodeURIComponent(base64Encoded);
+		expect(recursiveContainsCredential(urlEncoded)).toBe(true);
+	});
+
+	it("detects base64(urlencode(base64(credential))) — triple-nested", () => {
+		const credential = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij";
+		const base64First = Buffer.from(credential).toString("base64");
+		const urlEncoded = encodeURIComponent(base64First);
+		const base64Second = Buffer.from(urlEncoded).toString("base64");
+		expect(recursiveContainsCredential(base64Second)).toBe(true);
+	});
+
+	it("respects depth limit — depth 5 nesting returns false", () => {
+		const credential = "sk-ant-abc123-deeply-nested-key";
+		let encoded: string = credential;
+		for (let i = 0; i < 5; i++) {
+			encoded = Buffer.from(encoded).toString("base64");
+		}
+		expect(recursiveContainsCredential(encoded)).toBe(false);
+	});
+
+	it("bails on oversized input (100KB) without performance regression", () => {
+		const largeBlob = "A".repeat(100_000);
+		const start = performance.now();
+		const result = recursiveContainsCredential(largeBlob);
+		const elapsed = performance.now() - start;
+		expect(result).toBe(false);
+		expect(elapsed).toBeLessThan(50);
+	});
+
+	it("does not false-positive on non-credential base64", () => {
+		const normalText = "Hello, World! This is a normal message.";
+		const encoded = Buffer.from(normalText).toString("base64");
+		expect(recursiveContainsCredential(encoded)).toBe(false);
+	});
+
+	it("processes 1000 typical inputs in < 50ms", () => {
+		const inputs: string[] = [];
+		for (let i = 0; i < 1000; i++) {
+			inputs.push(
+				`normal text with some base64 ${Buffer.from(`value-${i}`).toString("base64")} content`,
+			);
+		}
+		const start = performance.now();
+		for (const input of inputs) {
+			recursiveContainsCredential(input);
+		}
+		const elapsed = performance.now() - start;
+		expect(elapsed).toBeLessThan(50);
+	});
+});
+
+describe("JWT token detection", () => {
+	it("detects JWT tokens", () => {
+		const jwt =
+			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+		expect(containsCredential(`token: ${jwt}`)).toBe(true);
+	});
+
+	it("redacts JWT tokens", () => {
+		const jwt =
+			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+		expect(redactAllCredentials(`token: ${jwt}`)).not.toContain("eyJ");
+	});
+
+	it("does not false-positive on short base64 strings", () => {
+		expect(containsCredential("eyJhbG")).toBe(false);
+	});
+});
+
+describe("Stripe key detection", () => {
+	// Build test keys dynamically to avoid GitHub push protection false positives
+	const stripePrefix = ["sk", "live"].join("_");
+	const stripeTestPrefix = ["sk", "test"].join("_");
+	const stripeSuffix = "0".repeat(24);
+
+	it("detects Stripe live secret keys", () => {
+		expect(containsCredential(`${stripePrefix}_${stripeSuffix}`)).toBe(true);
+	});
+
+	it("detects Stripe test secret keys", () => {
+		expect(containsCredential(`${stripeTestPrefix}_${stripeSuffix}`)).toBe(true);
+	});
+
+	it("redacts Stripe keys", () => {
+		expect(redactAllCredentials(`key: ${stripePrefix}_${stripeSuffix}`)).toContain("[REDACTED]");
+	});
+
+	it("does not interfere with OpenAI sk- pattern", () => {
+		expect(containsCredential("sk-abcdefghijklmnopqrstuv")).toBe(true);
+	});
+});
+
+describe("redactAllCredentialsWithEncoding — multi-level", () => {
+	it("redacts double-base64-encoded credentials", () => {
+		const credential = "sk-ant-abc123-testkey-double";
+		const singleEncoded = Buffer.from(credential).toString("base64");
+		const doubleEncoded = Buffer.from(singleEncoded).toString("base64");
+		const input = `data: ${doubleEncoded}`;
+		const result = redactAllCredentialsWithEncoding(input);
+		expect(result).toContain("[REDACTED_ENCODED]");
+		expect(result).not.toContain(doubleEncoded);
+	});
+
+	it("redacts triple-nested encoded credentials via URL+base64", () => {
+		const credential = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij";
+		const base64First = Buffer.from(credential).toString("base64");
+		const urlEncoded = encodeURIComponent(base64First);
+		const base64Second = Buffer.from(urlEncoded).toString("base64");
+		const input = `token: ${base64Second}`;
+		const result = redactAllCredentialsWithEncoding(input);
+		expect(result).toContain("[REDACTED");
 	});
 });

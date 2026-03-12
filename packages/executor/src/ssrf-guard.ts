@@ -1,5 +1,11 @@
 import dns from "node:dns/promises";
 
+/** Result of a successful SSRF check — contains resolved IPs for IP-pinned fetch. */
+export interface SsrfResult {
+	resolvedIps: string[];
+	hostname: string;
+}
+
 export class SsrfError extends Error {
 	constructor(message: string) {
 		super(message);
@@ -87,7 +93,7 @@ export function isPrivateIp(ip: string): boolean {
  * Check a URL for SSRF: block requests to private IPs, localhost,
  * and cloud metadata endpoints. Resolves DNS to prevent rebinding.
  */
-export async function checkSsrf(url: string): Promise<void> {
+export async function checkSsrf(url: string): Promise<SsrfResult> {
 	let parsed: URL;
 	try {
 		parsed = new URL(url);
@@ -111,7 +117,7 @@ export async function checkSsrf(url: string): Promise<void> {
 		if (isPrivateIp(bare)) {
 			throw new SsrfError(`Blocked SSRF: ${bare} is a private/reserved IP`);
 		}
-		return;
+		return { resolvedIps: [bare], hostname: bare };
 	}
 
 	// Resolve DNS and check all returned IPs
@@ -135,4 +141,6 @@ export async function checkSsrf(url: string): Promise<void> {
 			throw new SsrfError(`Blocked SSRF: ${bare} resolved to private IP ${ip}`);
 		}
 	}
+
+	return { resolvedIps: allIps, hostname: bare };
 }

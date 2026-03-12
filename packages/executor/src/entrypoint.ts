@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import { AuditLogger } from "@sentinel/audit";
 import { CredentialVault } from "@sentinel/crypto";
 import { getDefaultConfig, validateConfig } from "@sentinel/policy";
+import { ensureDockerAuth } from "./docker-auth.js";
 import { createApp } from "./server.js";
 import { createToolRegistry } from "./tools/index.js";
 
@@ -17,6 +18,7 @@ try {
 	console.error(err instanceof Error ? err.message : String(err));
 	process.exit(1);
 }
+validated = ensureDockerAuth(validated);
 const config = Object.freeze(structuredClone(validated));
 
 const auditLogger = new AuditLogger(config.auditLogPath);

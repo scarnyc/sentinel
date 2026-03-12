@@ -65,7 +65,14 @@ export function scanContent(text: string): ScanResult {
 export function getModerationMode(): ModerationMode {
 	const mode = process.env.SENTINEL_MODERATION_MODE;
 	if (mode === "enforce" || mode === "off") return mode;
-	return "warn";
+	if (mode === "warn") return "warn";
+	if (mode) {
+		console.warn(
+			`[sentinel] WARNING: unrecognized SENTINEL_MODERATION_MODE="${mode}" — using default`,
+		);
+	}
+	// Default: enforce in Docker (production), warn in local dev
+	return process.env.SENTINEL_DOCKER === "true" ? "enforce" : "warn";
 }
 
 export interface ModerationResult {

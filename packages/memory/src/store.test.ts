@@ -190,3 +190,80 @@ describe("MemoryStore", () => {
 		expect(() => store.observe(validObs)).toThrow("MemoryStore is closed");
 	});
 });
+
+describe("writeSummary quota enforcement (LOW-14)", () => {
+	it("rejects writeSummary when global quota exceeded", () => {
+		const store = new MemoryStore(makeTempDbPath(), { maxTotalBytes: 100 });
+
+		// Fill near capacity with an observation
+		store.observe({
+			...validObs,
+			content: "x".repeat(90),
+		});
+
+		// Summary that exceeds remaining quota
+		expect(() =>
+			store.writeSummary({
+				project: "test",
+				source: "developer",
+				scope: "session",
+				periodStart: "2026-01-01",
+				periodEnd: "2026-01-02",
+				title: "Large summary",
+				investigated: ["lots of data ".repeat(10)],
+				learned: [],
+				completed: [],
+				nextSteps: [],
+				observationIds: [],
+			}),
+		).toThrow(MemoryQuotaError);
+
+		store.close();
+	});
+
+	it("allows writeSummary within quota", () => {
+		const store = new MemoryStore(makeTempDbPath());
+
+		const id = store.writeSummary({
+			project: "test",
+			source: "developer",
+			scope: "session",
+			periodStart: "2026-01-01",
+			periodEnd: "2026-01-02",
+			title: "Small summary",
+			investigated: ["item"],
+			learned: ["lesson"],
+			completed: ["task"],
+			nextSteps: [],
+			observationIds: [],
+		});
+		expect(id).toBeDefined();
+		expect(typeof id).toBe("string");
+
+		store.close();
+	});
+
+	it("writeSummary updates storage bytes after insert", () => {
+		const store = new MemoryStore(makeTempDbPath());
+		const before = store.getStorageBytes();
+
+		store.writeSummary({
+			project: "test",
+			source: "developer",
+			scope: "session",
+			periodStart: "2026-01-01",
+			periodEnd: "2026-01-02",
+			title: "Tracking bytes",
+			investigated: ["research item"],
+			learned: ["a lesson"],
+			completed: [],
+			nextSteps: [],
+			observationIds: [],
+		});
+
+		const after = store.getStorageBytes();
+		expect(after).toBeGreaterThan(before);
+
+		store.close();
+	});
+});

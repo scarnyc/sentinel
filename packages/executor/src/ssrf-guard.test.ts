@@ -101,7 +101,8 @@ describe("checkSsrf", () => {
 	it("allows URL with public DNS resolution", async () => {
 		mockedDns.resolve4.mockResolvedValue(["1.2.3.4"]);
 		mockedDns.resolve6.mockRejectedValue(new Error("no AAAA"));
-		await expect(checkSsrf("https://example.com/api")).resolves.toBeUndefined();
+		const result = await checkSsrf("https://example.com/api");
+		expect(result).toEqual({ resolvedIps: ["1.2.3.4"], hostname: "example.com" });
 	});
 
 	it("blocks URL resolving to private IP (DNS rebinding)", async () => {
@@ -160,7 +161,11 @@ describe("checkSsrf", () => {
 	it("allows multiple public IPs", async () => {
 		mockedDns.resolve4.mockResolvedValue(["1.2.3.4", "5.6.7.8"]);
 		mockedDns.resolve6.mockResolvedValue(["2001:4860:4860::8888"]);
-		await expect(checkSsrf("https://example.com")).resolves.toBeUndefined();
+		const result = await checkSsrf("https://example.com");
+		expect(result).toEqual({
+			resolvedIps: ["1.2.3.4", "5.6.7.8", "2001:4860:4860::8888"],
+			hostname: "example.com",
+		});
 	});
 
 	it("throws when DNS resolution fails entirely", async () => {
@@ -179,5 +184,35 @@ describe("checkSsrf", () => {
 
 	it("blocks http://[fe90::1]/ (IPv6 link-local in full range)", async () => {
 		await expect(checkSsrf("http://[fe90::1]/")).rejects.toThrow(SsrfError);
+	});
+
+	it("returns resolved IPs for public hostname", async () => {
+		mockedDns.resolve4.mockResolvedValue(["93.184.216.34"]);
+		mockedDns.resolve6.mockRejectedValue(new Error("no AAAA"));
+		const result = await checkSsrf("https://example.com/path");
+		expect(result.resolvedIps).toEqual(["93.184.216.34"]);
+		expect(result.hostname).toBe("example.com");
+	});
+
+	it("returns IP literal directly without DNS lookup", async () => {
+		const result = await checkSsrf("https://1.2.3.4/path");
+		expect(result.resolvedIps).toEqual(["1.2.3.4"]);
+		expect(result.hostname).toBe("1.2.3.4");
+		expect(mockedDns.resolve4).not.toHaveBeenCalled();
+	});
+
+	it("returns IPv6 literal directly without DNS lookup", async () => {
+		const result = await checkSsrf("https://[2001:db8::1]/path");
+		expect(result.resolvedIps).toEqual(["2001:db8::1"]);
+		expect(result.hostname).toBe("2001:db8::1");
+		expect(mockedDns.resolve4).not.toHaveBeenCalled();
+	});
+
+	it("returns both v4 and v6 resolved IPs", async () => {
+		mockedDns.resolve4.mockResolvedValue(["93.184.216.34"]);
+		mockedDns.resolve6.mockResolvedValue(["2606:2800:220:1:248:1893:25c8:1946"]);
+		const result = await checkSsrf("https://example.com/path");
+		expect(result.resolvedIps).toEqual(["93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"]);
+		expect(result.hostname).toBe("example.com");
 	});
 });

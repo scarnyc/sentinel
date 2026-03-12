@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { sign as ed25519Sign, verify as ed25519Verify } from "@sentinel/crypto";
+import { sign as ed25519Sign, verify as ed25519Verify, generateKeyPair } from "@sentinel/crypto";
 import type { AuditEntry } from "@sentinel/types";
 import Database from "better-sqlite3";
 import { type AuditFilters, buildFilterQuery } from "./queries.js";
@@ -22,6 +22,12 @@ CREATE TABLE IF NOT EXISTS audit_log (
   entry_hash TEXT NOT NULL DEFAULT '',
   signature TEXT,
   created_at TEXT DEFAULT (datetime('now'))
+)`;
+
+const CREATE_META_TABLE = `
+CREATE TABLE IF NOT EXISTS audit_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
 )`;
 
 const CREATE_INDEX_SESSION =
@@ -53,6 +59,11 @@ interface AuditRow {
 }
 
 export type ChainVerification = { valid: true } | { valid: false; brokenAt: string };
+
+export interface VerifyChainOptions {
+	publicKey?: Buffer;
+	strictSignatures?: boolean;
+}
 
 /**
  * Compute a SHA-256 hash for an audit entry, chaining to the previous entry's hash.
@@ -99,19 +110,26 @@ export class AuditLogger {
 	private db: Database.Database | null;
 	private insertStmt: Database.Statement;
 	private getLastHashStmt: Database.Statement;
-	private signingKey: Buffer | undefined;
+	private signingKey: Buffer;
 
 	constructor(dbPath: string, signingKey?: Buffer) {
 		const db = new Database(dbPath);
 		db.pragma("journal_mode = WAL");
 		db.exec(CREATE_TABLE);
 		this.migrateIfNeeded(db);
+		db.exec(CREATE_META_TABLE);
 		db.exec(CREATE_INDEX_SESSION);
 		db.exec(CREATE_INDEX_TIMESTAMP);
 		db.exec(CREATE_INDEX_TOOL);
 
 		this.db = db;
-		this.signingKey = signingKey;
+
+		if (signingKey) {
+			this.signingKey = signingKey;
+		} else {
+			this.signingKey = this.loadOrGenerateSigningKey(db);
+		}
+
 		this.insertStmt = db.prepare(INSERT_SQL);
 		this.getLastHashStmt = db.prepare(
 			"SELECT entry_hash FROM audit_log ORDER BY rowid DESC LIMIT 1",
@@ -127,17 +145,15 @@ export class AuditLogger {
 			const prevHash = lastRow?.entry_hash ?? "";
 			const entryHash = computeEntryHash(entry, prevHash);
 
-			// Always recompute signature when signing key is configured (ignore caller-supplied values).
+			// Always recompute signature (ignore caller-supplied values).
 			// Signing failure must not prevent audit logging (Invariant #2 > Invariant #7).
 			let signature: string | null = null;
-			if (this.signingKey) {
-				try {
-					signature = ed25519Sign(entryHash, this.signingKey);
-				} catch (signErr) {
-					console.error(
-						`[audit] Ed25519 signing failed for entry ${entry.id}: ${signErr instanceof Error ? signErr.message : String(signErr)}`,
-					);
-				}
+			try {
+				signature = ed25519Sign(entryHash, this.signingKey);
+			} catch (signErr) {
+				console.error(
+					`[audit] Ed25519 signing failed for entry ${entry.id}: ${signErr instanceof Error ? signErr.message : String(signErr)}`,
+				);
 			}
 
 			this.insertStmt.run(
@@ -184,7 +200,11 @@ export class AuditLogger {
 		return rows.map(rowToEntry);
 	}
 
-	verifyChain(publicKey?: Buffer): ChainVerification {
+	verifyChain(options?: VerifyChainOptions | Buffer): ChainVerification {
+		const opts: VerifyChainOptions = Buffer.isBuffer(options)
+			? { publicKey: options }
+			: (options ?? {});
+
 		const db = this.getDb();
 		// Select ALL fields included in computeEntryHash to ensure tamper detection
 		const rows = db
@@ -232,15 +252,19 @@ export class AuditLogger {
 				return { valid: false, brokenAt: row.id };
 			}
 
-			// Verify Ed25519 signature when present and public key provided
-			if (row.signature && publicKey) {
-				try {
-					const valid = ed25519Verify(row.entry_hash, row.signature, publicKey);
-					if (!valid) {
+			// Verify Ed25519 signature when public key provided
+			if (opts.publicKey) {
+				if (row.signature) {
+					try {
+						const valid = ed25519Verify(row.entry_hash, row.signature, opts.publicKey);
+						if (!valid) {
+							return { valid: false, brokenAt: row.id };
+						}
+					} catch {
+						// Malformed signature or key — treat as verification failure for this entry
 						return { valid: false, brokenAt: row.id };
 					}
-				} catch {
-					// Malformed signature or key — treat as verification failure for this entry
+				} else if (opts.strictSignatures) {
 					return { valid: false, brokenAt: row.id };
 				}
 			}
@@ -251,11 +275,45 @@ export class AuditLogger {
 		return { valid: true };
 	}
 
+	/** Get the public key used for signing (auto-generated or explicit). */
+	getSigningPublicKey(): Buffer | undefined {
+		// If explicit key was provided, we don't have the public key
+		// (caller should already know it)
+		// If auto-generated, read from audit_meta
+		const db = this.getDb();
+		const row = db
+			.prepare("SELECT value FROM audit_meta WHERE key = ?")
+			.get("auto_signing_public_key") as { value: string } | undefined;
+		return row ? Buffer.from(row.value, "hex") : undefined;
+	}
+
 	close(): void {
 		if (this.db) {
 			this.db.close();
 			this.db = null;
 		}
+	}
+
+	// SENTINEL: auto-generate Ed25519 keypair when no explicit signingKey provided
+	private loadOrGenerateSigningKey(db: Database.Database): Buffer {
+		const existingKey = db
+			.prepare("SELECT value FROM audit_meta WHERE key = ?")
+			.get("auto_signing_private_key") as { value: string } | undefined;
+
+		if (existingKey) {
+			return Buffer.from(existingKey.value, "hex");
+		}
+
+		// Generate new keypair
+		const { publicKey, privateKey } = generateKeyPair();
+
+		const insertMeta = db.prepare("INSERT OR REPLACE INTO audit_meta (key, value) VALUES (?, ?)");
+		db.transaction(() => {
+			insertMeta.run("auto_signing_private_key", privateKey.toString("hex"));
+			insertMeta.run("auto_signing_public_key", publicKey.toString("hex"));
+		})();
+
+		return privateKey;
 	}
 
 	// SENTINEL: migrate existing DBs that lack Merkle hash-chain columns

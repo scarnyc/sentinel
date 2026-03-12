@@ -38,6 +38,10 @@ const CREDENTIAL_PATTERNS: readonly RegExp[] = [
 	// PEM private keys (PKCS#8, RSA, EC, OpenSSH, DSA)
 	// Bounded to 16KB to prevent unbounded backtracking on malformed input (ReDoS hardening).
 	/-----BEGIN\s+(?:RSA\s+|EC\s+|OPENSSH\s+|DSA\s+)?PRIVATE KEY-----[\s\S]{1,16384}?-----END\s+(?:RSA\s+|EC\s+|OPENSSH\s+|DSA\s+)?PRIVATE KEY-----/g,
+	// JWT tokens (three dot-separated base64url segments, header starts with eyJ)
+	/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
+	// Stripe secret keys
+	/\bsk_(live|test)_[A-Za-z0-9]{20,}/g,
 ];
 
 const REDACTED = "[REDACTED]";
@@ -77,6 +81,59 @@ const BASE64_CHUNK_RE = /[A-Za-z0-9+/=]{20,}/g;
 /** Regex detecting percent-encoded hex sequences */
 const PERCENT_ENCODED_RE = /%[0-9A-Fa-f]{2}/;
 
+const MAX_RECURSIVE_DEPTH = 4;
+const MAX_RECURSIVE_INPUT_SIZE = 65_536; // 64KB
+
+/**
+ * Recursively check for credentials through multiple layers of encoding.
+ * Tries base64 and URL decoding at each level, early-terminates when
+ * decoded equals input (no more decoding possible).
+ */
+export function recursiveContainsCredential(text: string, depth = 0): boolean {
+	if (depth >= MAX_RECURSIVE_DEPTH || text.length > MAX_RECURSIVE_INPUT_SIZE) {
+		return false;
+	}
+
+	// Check current level
+	if (containsCredential(text)) {
+		return true;
+	}
+
+	// Try base64 decode on chunks
+	const base64Re = /[A-Za-z0-9+/=]{20,}/g;
+	const chunks = text.match(base64Re);
+	if (chunks) {
+		for (const chunk of chunks) {
+			try {
+				const decoded = Buffer.from(chunk, "base64").toString("utf-8");
+				if (decoded !== chunk && decoded.length > 0) {
+					if (recursiveContainsCredential(decoded, depth + 1)) {
+						return true;
+					}
+				}
+			} catch {
+				// Invalid base64
+			}
+		}
+	}
+
+	// Try URL decode if percent-encoded
+	if (PERCENT_ENCODED_RE.test(text)) {
+		try {
+			const decoded = decodeURIComponent(text);
+			if (decoded !== text) {
+				if (recursiveContainsCredential(decoded, depth + 1)) {
+					return true;
+				}
+			}
+		} catch {
+			// Invalid percent-encoding
+		}
+	}
+
+	return false;
+}
+
 /** Matches runs of URL-encoded content including surrounding non-encoded chars.
  * Captures: leading alphanumeric + sequences of %XX with interleaved alphanumeric.
  * E.g., "sk%2Dant%2Dabc123" matches as one segment so credentials spanning boundaries are caught. */
@@ -94,12 +151,12 @@ export function redactAllCredentialsWithEncoding(text: string): string {
 	// Pass 1: plaintext
 	let result = redactAllCredentials(text);
 
-	// Pass 2: base64 chunks
+	// Pass 2: base64 chunks — recursively decode to catch multi-level encoding
 	BASE64_CHUNK_RE.lastIndex = 0;
 	result = result.replace(BASE64_CHUNK_RE, (chunk) => {
 		try {
 			const decoded = Buffer.from(chunk, "base64").toString("utf-8");
-			if (containsCredential(decoded)) {
+			if (recursiveContainsCredential(decoded)) {
 				return REDACTED_ENCODED;
 			}
 		} catch {
@@ -108,14 +165,13 @@ export function redactAllCredentialsWithEncoding(text: string): string {
 		return chunk;
 	});
 
-	// Pass 3: URL-encoded segments — decode individual encoded runs, not the whole string.
-	// This preserves non-credential content in its original encoding while still catching
-	// credentials that are percent-encoded (e.g., sk%2Dant%2Dabc123).
+	// Pass 3: URL-encoded segments — recursively decode to catch multi-level encoding.
+	// Decodes individual encoded runs, not the whole string, preserving non-credential content.
 	if (PERCENT_ENCODED_RE.test(result)) {
 		result = result.replace(URL_ENCODED_RUN_RE, (segment) => {
 			try {
 				const decoded = decodeURIComponent(segment);
-				if (containsCredential(decoded)) {
+				if (recursiveContainsCredential(decoded)) {
 					return REDACTED_ENCODED;
 				}
 			} catch {
