@@ -32,6 +32,69 @@ describe("redactAllCredentials", () => {
 		});
 	});
 
+	describe("Private key patterns", () => {
+		it("redacts PEM private keys (PKCS#8)", () => {
+			const input = `{"type":"service_account","private_key":"-----BEGIN PRIVATE KEY-----\\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcw...\\n-----END PRIVATE KEY-----\\n"}`;
+			const result = redactAllCredentials(input);
+			expect(result).not.toContain("MIIEvQIBADANBgkqhkiG9w0");
+			expect(result).toContain("[REDACTED]");
+		});
+
+		it("redacts RSA private keys", () => {
+			const input =
+				"-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0Z3VS5JJcds3xfn\n-----END RSA PRIVATE KEY-----";
+			const result = redactAllCredentials(input);
+			expect(result).not.toContain("MIIEowIBAAKCAQEA0Z3VS5JJcds3xfn");
+			expect(result).toContain("[REDACTED]");
+		});
+
+		it("redacts EC private keys", () => {
+			const input = "-----BEGIN EC PRIVATE KEY-----\nMHQCAQEEIGkz0R\n-----END EC PRIVATE KEY-----";
+			const result = redactAllCredentials(input);
+			expect(result).not.toContain("MHQCAQEEIGkz0R");
+			expect(result).toContain("[REDACTED]");
+		});
+
+		it("redacts OpenSSH private keys", () => {
+			const input =
+				"-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEA\n-----END OPENSSH PRIVATE KEY-----";
+			const result = redactAllCredentials(input);
+			expect(result).not.toContain("b3BlbnNzaC1rZXktdjEA");
+			expect(result).toContain("[REDACTED]");
+		});
+
+		it("redacts DSA private keys", () => {
+			const input =
+				"-----BEGIN DSA PRIVATE KEY-----\nMIIBuwIBAAJBALRi\n-----END DSA PRIVATE KEY-----";
+			const result = redactAllCredentials(input);
+			expect(result).not.toContain("MIIBuwIBAAJBALRi");
+			expect(result).toContain("[REDACTED]");
+		});
+
+		it("does not false-positive on public keys", () => {
+			const input =
+				"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEF\n-----END PUBLIC KEY-----";
+			const result = redactAllCredentials(input);
+			expect(result).toContain("MIIBIjANBgkqhkiG9w0BAQEF");
+		});
+
+		it("redacts private key in Google service account JSON", () => {
+			const serviceAccount = JSON.stringify({
+				type: "service_account",
+				project_id: "my-project",
+				private_key:
+					"-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7\n-----END PRIVATE KEY-----\n",
+				client_email: "svc@my-project.iam.gserviceaccount.com",
+			});
+			const result = redactAllCredentials(serviceAccount);
+			expect(result).not.toContain("MIIEvQIBADANBgkqhkiG9w0");
+			expect(result).toContain("[REDACTED]");
+			// Non-sensitive fields preserved
+			expect(result).toContain("service_account");
+			expect(result).toContain("my-project");
+		});
+	});
+
 	// Regression: existing patterns still work
 	describe("existing patterns regression", () => {
 		it("still redacts Anthropic keys", () => {

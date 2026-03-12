@@ -1,4 +1,5 @@
 import type { CredentialVault } from "@sentinel/crypto";
+import { redactAllCredentialsWithEncoding } from "@sentinel/types";
 import type { Context } from "hono";
 import { checkSsrf, SsrfError } from "./ssrf-guard.js";
 
@@ -175,7 +176,13 @@ export function createLlmProxyHandler(vault?: CredentialVault): (c: Context) => 
 				}
 			}
 
-			return new Response(upstreamResponse.body, {
+			// SENTINEL: Filter credential patterns from response body before it reaches agent.
+			// Reads full body as text, applies encoding-aware redaction, returns filtered response.
+			// This prevents LLM API error messages from leaking credentials (e.g., "Invalid API key: sk-ant-...").
+			const rawBody = await upstreamResponse.text();
+			const filteredBody = redactAllCredentialsWithEncoding(rawBody);
+
+			return new Response(filteredBody, {
 				status: upstreamResponse.status,
 				headers: responseHeaders,
 			});

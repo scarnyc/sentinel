@@ -1,4 +1,5 @@
 import {
+	containsCredential,
 	GMAIL_SEND_PATTERNS,
 	GWS_READ_PATTERNS,
 	type GwsAgentScopes,
@@ -76,6 +77,30 @@ export async function executeGws(
 				error: `GWS parameter validation failed: ${validation.errors.join("; ")}`,
 				duration_ms: Date.now() - start,
 			};
+		}
+	}
+
+	// SENTINEL: Credential leakage check — block emails containing API keys/tokens/[REDACTED] markers
+	if (params.args && params.service === "gmail" && GMAIL_SEND_PATTERNS.test(params.method)) {
+		GMAIL_SEND_PATTERNS.lastIndex = 0;
+		const mode = getModerationMode();
+		if (mode !== "off") {
+			const subject = typeof params.args.subject === "string" ? params.args.subject : "";
+			const body = typeof params.args.body === "string" ? params.args.body : "";
+			const emailText = `${subject}\n${body}`;
+			const hasRedacted = /\[REDACTED\]|\[PII_REDACTED\]/.test(emailText);
+
+			if (containsCredential(emailText) || hasRedacted) {
+				if (mode === "enforce") {
+					return {
+						manifestId,
+						success: false,
+						error: "Outbound email blocked: credential pattern detected in email content",
+						duration_ms: Date.now() - start,
+					};
+				}
+				console.warn("[gws:outbound-cred] Credential pattern detected in outbound email");
+			}
 		}
 	}
 

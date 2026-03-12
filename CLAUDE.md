@@ -293,6 +293,7 @@ Defined in `.claude/settings.json` — includes test, lint, and typecheck comman
 - **Worktree dist/ independence** — git worktrees don't share `dist/` with main; workspace deps (e.g., `@sentinel/types`) need manual build in worktree: `npx tsup src/index.ts --format esm`
 - **Rampart blocks `.rampart/` writes** — standard policy `block-sensitive-writes` prevents agent from editing `.rampart/policy.yaml`; policy changes are human-only
 - **Rampart `**` glob quirk** — `**/path` requires ≥1 path segment; always include bare `path` variant alongside `**/path`
+- **Google OAuth tokens in OS Keyring** — GWS CLI stores tokens in macOS Keychain, NOT Sentinel vault; Docker deployment recommended for production (agent can't reach host keyring); local dev should use test/sandbox Google account. See `docs/security/gws-cli-audit.md`
 
 
 ## Build Progress
@@ -307,6 +308,7 @@ Defined in `.claude/settings.json` — includes test, lint, and typecheck comman
 | Rampart Integration | — | — | Host-level Rampart firewall v0.8.3, 45 standard + 3 Sentinel project policies, PreToolUse hooks |
 | Wave 2.1: Security Primitives | 553 | — | Ed25519 manifest signing, `write-irreversible` category, irreversible TUI warning |
 | Wave 2.2: GWS CLI + Email Defense | 583 | — | GWS tool integration, email injection scanner, per-agent scoping, credential zeroization (G1-G8), Docker hardening |
+| GWS Credential Audit | 594 | — | Closed 5 audit gaps: LLM proxy body filtering, PEM key detection, exfiltration patterns, outbound email credential gate, OS Keyring docs |
 
 ### Backlog
 

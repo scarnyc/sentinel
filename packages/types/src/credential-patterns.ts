@@ -35,6 +35,8 @@ const CREDENTIAL_PATTERNS: readonly RegExp[] = [
 	/Bearer\s+[A-Za-z0-9_\-.~+/]+=*/g,
 	// Database connection strings
 	/(?:postgres|mysql|mongodb(?:\+srv)?):\/\/[^\s]+/g,
+	// PEM private keys (PKCS#8, RSA, EC, OpenSSH, DSA)
+	/-----BEGIN\s+(?:RSA\s+|EC\s+|OPENSSH\s+|DSA\s+)?PRIVATE KEY-----[\s\S]*?-----END\s+(?:RSA\s+|EC\s+|OPENSSH\s+|DSA\s+)?PRIVATE KEY-----/g,
 ];
 
 const REDACTED = "[REDACTED]";

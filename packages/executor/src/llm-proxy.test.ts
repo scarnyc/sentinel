@@ -289,6 +289,93 @@ describe("LLM Proxy", () => {
 		});
 	});
 
+	describe("response body credential filtering", () => {
+		it("redacts credential patterns from response body", async () => {
+			const bodyWithCreds = JSON.stringify({
+				error: { message: "Invalid API key: sk-ant-abc123-leaked-key-in-error" },
+			});
+			const mockResponse = new Response(bodyWithCreds, {
+				status: 401,
+				headers: { "content-type": "application/json" },
+			});
+			vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(mockResponse);
+
+			const res = await app.request("/proxy/llm/v1/messages", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({}),
+			});
+
+			const text = await res.text();
+			expect(text).not.toContain("sk-ant-abc123");
+			expect(text).toContain("[REDACTED]");
+		});
+
+		it("redacts Google OAuth tokens from response body", async () => {
+			const bodyWithToken = JSON.stringify({
+				debug: "token ya29.a0ARrdaM_leaked_access_token_1234567890",
+			});
+			const mockResponse = new Response(bodyWithToken, {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+			vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(mockResponse);
+
+			const res = await app.request("/proxy/llm/v1/messages", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({}),
+			});
+
+			const text = await res.text();
+			expect(text).not.toContain("ya29.");
+			expect(text).toContain("[REDACTED]");
+		});
+
+		it("redacts private keys from response body", async () => {
+			const bodyWithKey = JSON.stringify({
+				content: "Here is a key: -----BEGIN PRIVATE KEY-----\nMIIEvQ\n-----END PRIVATE KEY-----",
+			});
+			const mockResponse = new Response(bodyWithKey, {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+			vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(mockResponse);
+
+			const res = await app.request("/proxy/llm/v1/messages", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({}),
+			});
+
+			const text = await res.text();
+			expect(text).not.toContain("MIIEvQ");
+			expect(text).not.toContain("BEGIN PRIVATE KEY");
+			expect(text).toContain("[REDACTED]");
+		});
+
+		it("passes through clean response body unchanged", async () => {
+			const cleanBody = JSON.stringify({
+				id: "msg_123",
+				content: [{ type: "text", text: "Hello world" }],
+			});
+			const mockResponse = new Response(cleanBody, {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+			vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(mockResponse);
+
+			const res = await app.request("/proxy/llm/v1/messages", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({}),
+			});
+
+			const text = await res.text();
+			expect(text).toBe(cleanBody);
+		});
+	});
+
 	it("returns 502 on fetch error", async () => {
 		vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new Error("ECONNREFUSED"));
 
