@@ -38,6 +38,22 @@ const CREDENTIAL_PATTERNS: readonly RegExp[] = [
 ];
 
 const REDACTED = "[REDACTED]";
+const REDACTED_ENCODED = "[REDACTED_ENCODED]";
+
+/**
+ * Check if text contains any credential pattern.
+ * Returns true on first match, does not mutate.
+ */
+export function containsCredential(text: string): boolean {
+	for (const pattern of CREDENTIAL_PATTERNS) {
+		pattern.lastIndex = 0;
+		if (pattern.test(text)) {
+			pattern.lastIndex = 0;
+			return true;
+		}
+	}
+	return false;
+}
 
 /**
  * Redact all credential patterns from a string.
@@ -49,6 +65,72 @@ export function redactAllCredentials(text: string): string {
 		pattern.lastIndex = 0;
 		result = result.replace(pattern, REDACTED);
 	}
+	return result;
+}
+
+/** Regex matching base64 chunks of 20+ characters */
+const BASE64_CHUNK_RE = /[A-Za-z0-9+/=]{20,}/g;
+
+/** Regex detecting percent-encoded hex sequences */
+const PERCENT_ENCODED_RE = /%[0-9A-Fa-f]{2}/;
+
+/** Regex matching individual percent-encoded segments: key=value pairs or standalone encoded tokens */
+const PERCENT_SEGMENT_RE = /(?:[^&=]+=[^&]*(?:%[0-9A-Fa-f]{2})[^&]*)/g;
+
+/**
+ * Encoding-aware credential redaction.
+ *
+ * Three-pass approach:
+ *   1. Plaintext redaction via `redactAllCredentials()`
+ *   2. Base64 — find chunks ≥20 chars, decode, check for credentials
+ *   3. URL-encoding — scan percent-encoded segments individually (not the entire string)
+ *
+ * Fail-closed: unexpected errors during decoding result in redaction, not passthrough.
+ */
+export function redactAllCredentialsWithEncoding(text: string): string {
+	// Pass 1: plaintext
+	let result = redactAllCredentials(text);
+
+	// Pass 2: base64 chunks
+	BASE64_CHUNK_RE.lastIndex = 0;
+	result = result.replace(BASE64_CHUNK_RE, (chunk) => {
+		try {
+			const decoded = Buffer.from(chunk, "base64").toString("utf-8");
+			if (containsCredential(decoded)) {
+				return REDACTED_ENCODED;
+			}
+		} catch (error) {
+			if (!(error instanceof TypeError)) {
+				// Unexpected error (OOM, regex engine) — fail-closed
+				return REDACTED_ENCODED;
+			}
+			// TypeError from invalid base64 — leave as-is
+		}
+		return chunk;
+	});
+
+	// Pass 3: URL-encoded segments — scan each segment individually to avoid
+	// corrupting non-credential percent-encoded content in the surrounding string
+	if (PERCENT_ENCODED_RE.test(result)) {
+		PERCENT_SEGMENT_RE.lastIndex = 0;
+		result = result.replace(PERCENT_SEGMENT_RE, (segment) => {
+			if (!PERCENT_ENCODED_RE.test(segment)) return segment;
+			try {
+				const decoded = decodeURIComponent(segment);
+				if (containsCredential(decoded)) {
+					return REDACTED_ENCODED;
+				}
+			} catch (error) {
+				if (!(error instanceof URIError)) {
+					// Unexpected error — fail-closed
+					return REDACTED_ENCODED;
+				}
+				// URIError from malformed percent-encoding — leave as-is
+			}
+			return segment;
+		});
+	}
+
 	return result;
 }
 
