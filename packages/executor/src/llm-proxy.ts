@@ -177,8 +177,11 @@ export function createLlmProxyHandler(vault?: CredentialVault): (c: Context) => 
 			const isStreaming = contentType.includes("text/event-stream");
 
 			if (isStreaming) {
-				// Remove content-length — streaming through TransformStream changes body size
+				// Remove content-length and transfer-encoding — streaming through TransformStream
+				// changes body size; stale transfer-encoding from upstream could conflict with
+				// the runtime's own chunked encoding on the transformed stream.
 				responseHeaders.delete("content-length");
+				responseHeaders.delete("transfer-encoding");
 
 				const filteredStream = upstreamResponse.body
 					? upstreamResponse.body.pipeThrough(createSseCredentialFilter())
