@@ -307,6 +307,7 @@ Defined in `.claude/settings.json` — includes test, lint, and typecheck comman
 | Rampart Integration | — | — | Host-level Rampart firewall v0.8.3, 45 standard + 3 Sentinel project policies, PreToolUse hooks |
 | Wave 2.1: Security Primitives | 553 | — | Ed25519 manifest signing, `write-irreversible` category, irreversible TUI warning |
 | Wave 2.2: GWS CLI + Email Defense | 583 | — | GWS tool integration, email injection scanner, per-agent scoping, credential zeroization (G1-G8), Docker hardening |
+| Wave 2.2b: Credential Zeroization | 652 | — | `useCredential()` helper, V8 string lifetime minimization, LLM proxy refactor, GWS vault migration, API deprecation |
 
 ### Backlog
 

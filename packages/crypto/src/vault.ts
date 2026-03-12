@@ -5,6 +5,8 @@ import { deriveKey, generateSalt } from "./key-derivation.js";
 
 const VERIFIER_PLAINTEXT = "sentinel-vault-v1";
 
+let retrieveWarned = false;
+
 interface VaultEntry {
 	type: string;
 	data: EncryptedBlob;
@@ -52,15 +54,20 @@ export class CredentialVault {
 		const salt = Buffer.from(data.salt, "base64");
 		const key = await deriveKey(masterPassword, salt);
 
-		// Validate password by decrypting verifier
-		const verified = decrypt(
+		// Validate password by decrypting verifier (Buffer-based to avoid V8 string)
+		const buf = decryptToBuffer(
 			key,
 			data.verifier.iv,
 			data.verifier.authTag,
 			data.verifier.ciphertext,
 		);
-		if (verified !== VERIFIER_PLAINTEXT) {
-			throw new DecryptionError("Invalid master password");
+		try {
+			const verified = buf.toString("utf8");
+			if (verified !== VERIFIER_PLAINTEXT) {
+				throw new DecryptionError("Invalid master password");
+			}
+		} finally {
+			buf.fill(0);
 		}
 
 		return new CredentialVault(vaultPath, key, data);
@@ -80,7 +87,17 @@ export class CredentialVault {
 		await this.save();
 	}
 
+	/**
+	 * @deprecated Use `retrieveBuffer()` or `useCredential()` instead.
+	 * Returns V8 immutable strings that cannot be zeroed from memory.
+	 */
 	async retrieve(serviceId: string): Promise<Record<string, string>> {
+		if (!retrieveWarned) {
+			console.warn(
+				"[sentinel/crypto] vault.retrieve() is deprecated — use retrieveBuffer() or useCredential()",
+			);
+			retrieveWarned = true;
+		}
 		const entry = this.data.entries[serviceId];
 		if (!entry) {
 			throw new Error(`No credential found for service: ${serviceId}`);

@@ -1,7 +1,9 @@
+import type { CredentialVault } from "@sentinel/crypto";
 import { GWS_READ_PATTERNS, type GwsAgentScopes, type ToolResult } from "@sentinel/types";
 import { execa } from "execa";
 import { moderateEmail } from "../moderation/email-scanner.js";
 import { truncateBashOutput } from "../output-truncation.js";
+import { getGwsAccessToken } from "./gws-auth.js";
 
 const STRIPPED_ENV_PREFIXES = ["SENTINEL_", "ANTHROPIC_", "OPENAI_", "GEMINI_"];
 const STRIPPED_ENV_KEYS = new Set([
@@ -36,6 +38,7 @@ export async function executeGws(
 	manifestId: string,
 	agentId?: string,
 	scopes?: GwsAgentScopes,
+	vault?: CredentialVault,
 ): Promise<ToolResult> {
 	const start = Date.now();
 
@@ -71,10 +74,21 @@ export async function executeGws(
 	}
 
 	try {
+		const env = stripSensitiveEnv(process.env);
+		if (vault) {
+			try {
+				const token = await getGwsAccessToken(vault);
+				env.GOOGLE_WORKSPACE_CLI_TOKEN = token;
+			} catch (_error) {
+				// Log but don't fail — fall back to keyring auth
+				console.warn("[gws] Vault token injection failed, falling back to keyring auth");
+			}
+		}
+
 		const result = await execa("gws", cliArgs, {
 			timeout: 30_000,
 			killSignal: "SIGKILL",
-			env: stripSensitiveEnv(process.env),
+			env,
 			extendEnv: false,
 			reject: false,
 		});

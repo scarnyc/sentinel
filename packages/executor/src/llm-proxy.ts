@@ -1,4 +1,4 @@
-import type { CredentialVault } from "@sentinel/crypto";
+import { type CredentialVault, useCredential } from "@sentinel/crypto";
 import type { Context } from "hono";
 import { checkSsrf, SsrfError } from "./ssrf-guard.js";
 
@@ -27,37 +27,6 @@ const HOST_AUTH_HEADERS: Record<string, { envVar: string; headerName: string; pr
 		headerName: "x-goog-api-key",
 	},
 };
-
-/**
- * Retrieve API key from vault as Buffer, extract the key string, then zero the Buffer.
- * Returns undefined if vault doesn't have the key.
- *
- * Vault stores credentials as JSON: { key: "sk-..." }
- * The Buffer is zeroed immediately after extracting the string value.
- * The resulting string is a short-lived local — better than process.env lifetime.
- */
-function getKeyFromVault(vault: CredentialVault, targetHost: string): string | undefined {
-	const serviceId = `llm/${targetHost}`;
-	try {
-		const buf = vault.retrieveBuffer(serviceId);
-		try {
-			const parsed: Record<string, string> = JSON.parse(buf.toString("utf8"));
-			return parsed.key;
-		} finally {
-			buf.fill(0);
-		}
-	} catch (error) {
-		// "No credential found" = key not stored yet → fall back to env.
-		// Anything else (DecryptionError, JSON parse failure) = vault corruption → log and fail.
-		if (error instanceof Error && error.message.startsWith("No credential found")) {
-			return undefined;
-		}
-		console.error(
-			`[llm-proxy] Vault retrieval failed for ${serviceId}: credential corrupted or inaccessible`,
-		);
-		return undefined;
-	}
-}
 
 /**
  * Creates an LLM proxy handler. When vault is provided, attempts vault-based
@@ -105,26 +74,6 @@ export function createLlmProxyHandler(vault?: CredentialVault): (c: Context) => 
 			forwardHeaders.set(key, value);
 		}
 
-		// SENTINEL: Inject API key — prefer vault Buffer over process.env
-		// Vault keys are zeroed after extraction; env vars persist for process lifetime
-		const authConfig = HOST_AUTH_HEADERS[targetHost];
-		if (authConfig) {
-			let apiKey: string | undefined;
-
-			if (vault) {
-				apiKey = getKeyFromVault(vault, targetHost);
-			}
-			if (!apiKey) {
-				apiKey = process.env[authConfig.envVar];
-			}
-
-			if (!apiKey) {
-				return c.json({ error: "LLM proxy configuration error" }, 500);
-			}
-			const value = authConfig.prefix ? `${authConfig.prefix}${apiKey}` : apiKey;
-			forwardHeaders.set(authConfig.headerName, value);
-		}
-
 		// SENTINEL: SSRF guard — verify target URL doesn't resolve to private IPs (Phase 1)
 		try {
 			await checkSsrf(targetUrl);
@@ -136,6 +85,51 @@ export function createLlmProxyHandler(vault?: CredentialVault): (c: Context) => 
 				`[llm-proxy] SSRF check failed unexpectedly: ${error instanceof Error ? error.message : "Unknown"}`,
 			);
 			return c.json({ error: "SSRF check failed" }, 500);
+		}
+
+		// SENTINEL: Inject API key — prefer vault (useCredential) over process.env
+		// Vault keys are scoped to the callback; Buffer zeroed in finally
+		const authConfig = HOST_AUTH_HEADERS[targetHost];
+		if (authConfig) {
+			if (vault) {
+				try {
+					return await useCredential(vault, `llm/${targetHost}`, async (cred) => {
+						const value = authConfig.prefix ? `${authConfig.prefix}${cred.key}` : cred.key;
+						forwardHeaders.set(authConfig.headerName, value);
+						try {
+							const upstreamResponse = await fetch(targetUrl, {
+								method: c.req.method,
+								headers: forwardHeaders,
+								body: c.req.method !== "GET" ? c.req.raw.body : undefined,
+								duplex: "half",
+							});
+							return new Response(upstreamResponse.body, {
+								status: upstreamResponse.status,
+								headers: upstreamResponse.headers,
+							});
+						} finally {
+							forwardHeaders.delete(authConfig.headerName);
+						}
+					});
+				} catch (error) {
+					if (error instanceof Error && error.message.startsWith("No credential found")) {
+						// Fall through to env var path
+					} else {
+						console.error(
+							`[llm-proxy] Vault retrieval failed for llm/${targetHost}: credential corrupted or inaccessible`,
+						);
+						// Fall through to env var path
+					}
+				}
+			}
+
+			// env var fallback (existing behavior for non-vault deployments)
+			const apiKey = process.env[authConfig.envVar];
+			if (!apiKey) {
+				return c.json({ error: "LLM proxy configuration error" }, 500);
+			}
+			const value = authConfig.prefix ? `${authConfig.prefix}${apiKey}` : apiKey;
+			forwardHeaders.set(authConfig.headerName, value);
 		}
 
 		try {

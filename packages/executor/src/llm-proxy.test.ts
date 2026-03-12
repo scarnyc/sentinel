@@ -245,11 +245,17 @@ describe("LLM Proxy with vault-based key retrieval", () => {
 		const vaultApp = new Hono();
 		vaultApp.all("/proxy/llm/*", createLlmProxyHandler(vault));
 
+		// Capture the auth header during the fetch call (before finally cleanup)
+		let capturedApiKey: string | null = null;
 		const mockResponse = new Response(JSON.stringify({ id: "msg_456" }), {
 			status: 200,
 			headers: { "Content-Type": "application/json" },
 		});
-		const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(mockResponse);
+		vi.spyOn(globalThis, "fetch").mockImplementationOnce(async (_url, init) => {
+			const headers = init?.headers as Headers;
+			capturedApiKey = headers.get("x-api-key");
+			return mockResponse;
+		});
 
 		const res = await vaultApp.request("/proxy/llm/v1/messages", {
 			method: "POST",
@@ -258,9 +264,7 @@ describe("LLM Proxy with vault-based key retrieval", () => {
 		});
 
 		expect(res.status).toBe(200);
-		expect(fetchSpy).toHaveBeenCalledOnce();
-		const headers = fetchSpy.mock.calls[0][1]?.headers as Headers;
-		expect(headers.get("x-api-key")).toBe("sk-ant-vault-key-123");
+		expect(capturedApiKey).toBe("sk-ant-vault-key-123");
 
 		vault.destroy();
 	});
@@ -287,6 +291,42 @@ describe("LLM Proxy with vault-based key retrieval", () => {
 		expect(res.status).toBe(200);
 		const headers = fetchSpy.mock.calls[0][1]?.headers as Headers;
 		expect(headers.get("x-api-key")).toBe("sk-ant-env-fallback");
+
+		vault.destroy();
+	});
+
+	it("auth header removed from forwardHeaders after fetch", async () => {
+		const vaultPath = await makeTempVaultPath();
+		const vault = await CredentialVault.create(vaultPath, "test-pass");
+		await vault.store("llm/api.anthropic.com", "api_key", {
+			key: "sk-ant-vault-scoped-key",
+		});
+
+		delete process.env.ANTHROPIC_API_KEY;
+
+		const vaultApp = new Hono();
+		vaultApp.all("/proxy/llm/*", createLlmProxyHandler(vault));
+
+		// Track the headers object passed to fetch so we can inspect it after the call
+		let capturedHeaders: Headers | undefined;
+		const mockResponse = new Response("{}", { status: 200 });
+		vi.spyOn(globalThis, "fetch").mockImplementationOnce(async (_url, init) => {
+			capturedHeaders = init?.headers as Headers;
+			// Verify the header IS present during the fetch call
+			expect(capturedHeaders.get("x-api-key")).toBe("sk-ant-vault-scoped-key");
+			return mockResponse;
+		});
+
+		const res = await vaultApp.request("/proxy/llm/v1/messages", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+
+		expect(res.status).toBe(200);
+		// After the handler returns, the auth header should have been deleted from forwardHeaders
+		expect(capturedHeaders).toBeDefined();
+		expect(capturedHeaders?.get("x-api-key")).toBeNull();
 
 		vault.destroy();
 	});

@@ -1,3 +1,4 @@
+import type { CredentialVault } from "@sentinel/crypto";
 import type { GwsAgentScopes } from "@sentinel/types";
 import { z } from "zod";
 import { executeBash } from "./bash.js";
@@ -47,6 +48,7 @@ const GwsParamsSchema = z.object({
 export function createToolRegistry(
 	allowedRoots?: readonly string[],
 	gwsScopes?: GwsAgentScopes,
+	vault?: CredentialVault,
 ): ToolRegistry {
 	const registry = new ToolRegistry();
 
@@ -73,7 +75,7 @@ export function createToolRegistry(
 	// SENTINEL: G4 — per-agent GWS scope restriction via closure-captured scopes
 	registry.registerBuiltin("gws", (params, manifestId, agentId) => {
 		const parsed = GwsParamsSchema.parse(params);
-		return executeGws(parsed, manifestId, agentId, gwsScopes);
+		return executeGws(parsed, manifestId, agentId, gwsScopes, vault);
 	});
 
 	return registry;
