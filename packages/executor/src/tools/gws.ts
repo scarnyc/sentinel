@@ -1,14 +1,19 @@
 import type { CredentialVault } from "@sentinel/crypto";
 import {
 	containsCredential,
-	GMAIL_SEND_PATTERNS,
+	GMAIL_CONTENT_PATTERNS,
 	GWS_READ_PATTERNS,
 	type GwsAgentScopes,
 	type GwsIntegrityConfig,
 	type ToolResult,
 } from "@sentinel/types";
 import { execa } from "execa";
-import { moderateEmail, scanOutboundEmail } from "../moderation/email-scanner.js";
+import { stripSensitiveEnv } from "../env-utils.js";
+import {
+	extractAllStringValues,
+	moderateEmail,
+	scanOutboundEmail,
+} from "../moderation/email-scanner.js";
 import { getModerationMode } from "../moderation/scanner.js";
 import { truncateBashOutput } from "../output-truncation.js";
 import { getGwsAccessToken } from "./gws-auth.js";
@@ -110,7 +115,7 @@ export async function executeGws(
 	}
 
 	if (params.args) {
-		const validation = validateGwsSendArgs(params.service, params.method, params.args);
+		const validation = validateGwsArgs(params.service, params.method, params.args);
 		if (!validation.valid) {
 			return {
 				manifestId,
@@ -122,13 +127,14 @@ export async function executeGws(
 	}
 
 	// SENTINEL: Credential leakage check — block emails containing API keys/tokens/[REDACTED] markers
-	if (params.args && params.service === "gmail" && GMAIL_SEND_PATTERNS.test(params.method)) {
-		GMAIL_SEND_PATTERNS.lastIndex = 0;
+	// Uses GMAIL_CONTENT_PATTERNS to also cover drafts.create/update (not just send)
+	GMAIL_CONTENT_PATTERNS.lastIndex = 0;
+	if (params.args && params.service === "gmail" && GMAIL_CONTENT_PATTERNS.test(params.method)) {
+		GMAIL_CONTENT_PATTERNS.lastIndex = 0;
 		const mode = getModerationMode();
 		if (mode !== "off") {
-			const subject = typeof params.args.subject === "string" ? params.args.subject : "";
-			const body = typeof params.args.body === "string" ? params.args.body : "";
-			const emailText = `${subject}\n${body}`;
+			const allStrings = extractAllStringValues(params.args);
+			const emailText = allStrings.join("\n");
 			const hasRedacted = /\[REDACTED\]|\[PII_REDACTED\]/.test(emailText);
 
 			if (containsCredential(emailText) || hasRedacted) {
@@ -145,9 +151,10 @@ export async function executeGws(
 		}
 	}
 
-	// Outbound email scanning: check subject/body for injection patterns before send
-	if (params.args && params.service === "gmail" && GMAIL_SEND_PATTERNS.test(params.method)) {
-		GMAIL_SEND_PATTERNS.lastIndex = 0;
+	// Outbound email scanning: check all string values for injection patterns
+	GMAIL_CONTENT_PATTERNS.lastIndex = 0;
+	if (params.args && params.service === "gmail" && GMAIL_CONTENT_PATTERNS.test(params.method)) {
+		GMAIL_CONTENT_PATTERNS.lastIndex = 0;
 		const mode = getModerationMode();
 		if (mode !== "off") {
 			const scanResult = scanOutboundEmail(params.args);

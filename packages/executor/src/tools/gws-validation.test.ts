@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import { executeGws, type GwsParams } from "./gws.js";
-import { validateGwsSendArgs } from "./gws-validation.js";
+import {
+	validateGwsAdminArgs,
+	validateGwsArgs,
+	validateGwsCalendarArgs,
+	validateGwsDriveArgs,
+	validateGwsGenericArgs,
+	validateGwsSendArgs,
+} from "./gws-validation.js";
 
 // Mock execa for the executeGws integration test
 vi.mock("execa", () => ({
@@ -110,6 +117,69 @@ describe("validateGwsSendArgs", () => {
 		expect(result.errors).toHaveLength(0);
 	});
 
+	describe("raw MIME blocking", () => {
+		it("args.raw on users.messages.send is rejected", () => {
+			const result = validateGwsSendArgs("gmail", "users.messages.send", {
+				raw: btoa("From: me\r\nTo: you\r\n\r\nHello"),
+				to: ["alice@example.com"],
+				subject: "Hello",
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining("raw MIME is not allowed")]),
+			);
+		});
+
+		it("args.raw on drafts.create is rejected", () => {
+			const result = validateGwsSendArgs("gmail", "drafts.create", {
+				raw: btoa("From: me\r\n\r\nDraft content"),
+				subject: "Draft",
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining("raw MIME is not allowed")]),
+			);
+		});
+
+		it("args.raw alongside valid to/subject is still rejected", () => {
+			const result = validateGwsSendArgs("gmail", "users.messages.send", {
+				raw: "anything",
+				to: ["alice@example.com"],
+				subject: "Hello",
+				body: "Clean body",
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining("raw MIME is not allowed")]),
+			);
+		});
+
+		it("non-gmail method with raw passes (not gmail-scoped)", () => {
+			const result = validateGwsSendArgs("drive", "files.create", { raw: "data" });
+			expect(result.valid).toBe(true);
+		});
+	});
+
+	describe("draft validation", () => {
+		it("drafts.create without to but with subject passes", () => {
+			const result = validateGwsSendArgs("gmail", "drafts.create", {
+				subject: "Draft subject",
+				body: "Draft body",
+			});
+			expect(result.valid).toBe(true);
+			expect(result.errors).toHaveLength(0);
+		});
+
+		it("drafts.update with valid fields passes", () => {
+			const result = validateGwsSendArgs("gmail", "drafts.update", {
+				subject: "Updated subject",
+				body: "Updated body",
+			});
+			expect(result.valid).toBe(true);
+			expect(result.errors).toHaveLength(0);
+		});
+	});
+
 	it("valid args with cc + bcc pass", () => {
 		const result = validateGwsSendArgs("gmail", "users.messages.send", {
 			to: ["alice@example.com"],
@@ -120,6 +190,137 @@ describe("validateGwsSendArgs", () => {
 		});
 		expect(result.valid).toBe(true);
 		expect(result.errors).toHaveLength(0);
+	});
+});
+
+describe("validateGwsGenericArgs", () => {
+	it("rejects oversized string", () => {
+		const result = validateGwsGenericArgs({ data: "x".repeat(1_048_577) });
+		expect(result.valid).toBe(false);
+		expect(result.errors[0]).toContain("maximum length");
+	});
+
+	it("rejects oversized array", () => {
+		const result = validateGwsGenericArgs({ items: Array.from({ length: 1001 }) });
+		expect(result.valid).toBe(false);
+		expect(result.errors[0]).toContain("maximum length");
+	});
+
+	it("rejects deeply nested object", () => {
+		let obj: Record<string, unknown> = { val: "deep" };
+		for (let i = 0; i < 12; i++) {
+			obj = { nested: obj };
+		}
+		const result = validateGwsGenericArgs(obj);
+		expect(result.valid).toBe(false);
+		expect(result.errors[0]).toContain("depth");
+	});
+
+	it("passes normal args", () => {
+		const result = validateGwsGenericArgs({ query: "test", limit: 10 });
+		expect(result.valid).toBe(true);
+	});
+});
+
+describe("validateGwsDriveArgs", () => {
+	it("rejects path traversal (..)", () => {
+		const result = validateGwsDriveArgs("files.get", { path: "../../etc/passwd" });
+		expect(result.valid).toBe(false);
+		expect(result.errors[0]).toContain("traversal");
+	});
+
+	it("rejects .env file targeting", () => {
+		const result = validateGwsDriveArgs("files.get", { name: "config.env" });
+		expect(result.valid).toBe(false);
+		expect(result.errors[0]).toContain("sensitive");
+	});
+
+	it("rejects .pem file targeting", () => {
+		const result = validateGwsDriveArgs("files.get", { name: "server.pem" });
+		expect(result.valid).toBe(false);
+		expect(result.errors[0]).toContain("sensitive");
+	});
+
+	it("passes normal file paths", () => {
+		const result = validateGwsDriveArgs("files.get", { name: "report.pdf", folderId: "abc123" });
+		expect(result.valid).toBe(true);
+	});
+});
+
+describe("validateGwsCalendarArgs", () => {
+	it("rejects >200 attendees", () => {
+		const attendees = Array.from({ length: 201 }, (_, i) => `user${i}@example.com`);
+		const result = validateGwsCalendarArgs("events.insert", { attendees });
+		expect(result.valid).toBe(false);
+		expect(result.errors[0]).toContain("200");
+	});
+
+	it("rejects invalid attendee format", () => {
+		const result = validateGwsCalendarArgs("events.insert", { attendees: ["not-an-email"] });
+		expect(result.valid).toBe(false);
+		expect(result.errors[0]).toContain("Invalid attendee");
+	});
+
+	it("accepts attendee objects with email field", () => {
+		const result = validateGwsCalendarArgs("events.insert", {
+			attendees: [{ email: "alice@example.com" }],
+		});
+		expect(result.valid).toBe(true);
+	});
+
+	it("passes normal calendar args without attendees", () => {
+		const result = validateGwsCalendarArgs("events.list", { calendarId: "primary" });
+		expect(result.valid).toBe(true);
+	});
+});
+
+describe("validateGwsAdminArgs", () => {
+	it("rejects users.delete", () => {
+		const result = validateGwsAdminArgs("users.delete");
+		expect(result.valid).toBe(false);
+		expect(result.errors[0]).toContain("not allowed");
+	});
+
+	it("allows users.list", () => {
+		const result = validateGwsAdminArgs("users.list");
+		expect(result.valid).toBe(true);
+	});
+
+	it("allows users.get", () => {
+		const result = validateGwsAdminArgs("users.get");
+		expect(result.valid).toBe(true);
+	});
+
+	it("rejects unknown admin method", () => {
+		const result = validateGwsAdminArgs("users.update");
+		expect(result.valid).toBe(false);
+	});
+});
+
+describe("validateGwsArgs (orchestrator)", () => {
+	it("combines generic + gmail validation errors", () => {
+		const result = validateGwsArgs("gmail", "users.messages.send", {
+			raw: "bypass",
+		});
+		expect(result.valid).toBe(false);
+		expect(result.errors).toEqual(expect.arrayContaining([expect.stringContaining("raw MIME")]));
+	});
+
+	it("combines generic + drive validation", () => {
+		const result = validateGwsArgs("drive", "files.get", { path: "../../etc/passwd" });
+		expect(result.valid).toBe(false);
+		expect(result.errors).toEqual(expect.arrayContaining([expect.stringContaining("traversal")]));
+	});
+
+	it("admin validation blocks non-read methods", () => {
+		const result = validateGwsArgs("admin", "users.delete", {});
+		expect(result.valid).toBe(false);
+		expect(result.errors).toEqual(expect.arrayContaining([expect.stringContaining("not allowed")]));
+	});
+
+	it("passes unknown service through generic validation only", () => {
+		const result = validateGwsArgs("sheets", "spreadsheets.get", { id: "abc" });
+		expect(result.valid).toBe(true);
 	});
 });
 
