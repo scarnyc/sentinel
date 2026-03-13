@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
   prev_hash TEXT NOT NULL DEFAULT '',
   entry_hash TEXT NOT NULL DEFAULT '',
   signature TEXT,
+  source TEXT,
   created_at TEXT DEFAULT (datetime('now'))
 )`;
 
@@ -37,8 +38,8 @@ const CREATE_INDEX_TIMESTAMP =
 const CREATE_INDEX_TOOL = "CREATE INDEX IF NOT EXISTS idx_audit_tool ON audit_log(tool)";
 
 const INSERT_SQL = `
-INSERT INTO audit_log (id, timestamp, manifest_id, session_id, agent_id, tool, category, decision, parameters_summary, result, duration_ms, prev_hash, entry_hash, signature)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+INSERT INTO audit_log (id, timestamp, manifest_id, session_id, agent_id, tool, category, decision, parameters_summary, result, duration_ms, prev_hash, entry_hash, signature, source)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 interface AuditRow {
 	id: string;
@@ -55,6 +56,7 @@ interface AuditRow {
 	prev_hash: string;
 	entry_hash: string;
 	signature: string | null;
+	source: string | null;
 	created_at: string;
 }
 
@@ -103,6 +105,7 @@ function rowToEntry(row: AuditRow): AuditEntry {
 		result: row.result as AuditEntry["result"],
 		duration_ms: row.duration_ms ?? undefined,
 		signature: row.signature ?? undefined,
+		source: (row.source as AuditEntry["source"]) ?? undefined,
 	};
 }
 
@@ -171,6 +174,7 @@ export class AuditLogger {
 				prevHash,
 				entryHash,
 				signature,
+				entry.source ?? null,
 			);
 		});
 
@@ -370,6 +374,10 @@ export class AuditLogger {
 			// SENTINEL: migrate for Ed25519 manifest signing (Wave 2.1)
 			if (!columnNames.includes("signature")) {
 				db.exec("ALTER TABLE audit_log ADD COLUMN signature TEXT");
+			}
+			// SENTINEL: migrate for multi-source audit (Wave 2.3 — OpenClaw integration)
+			if (!columnNames.includes("source")) {
+				db.exec("ALTER TABLE audit_log ADD COLUMN source TEXT");
 			}
 		} catch (migrationError) {
 			throw new Error(

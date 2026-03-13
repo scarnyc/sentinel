@@ -7,6 +7,7 @@ import { type SentinelConfig, SentinelConfigSchema } from "@sentinel/types";
 import { auditCommand } from "./commands/audit.js";
 import { chatCommand } from "./commands/chat.js";
 import { initCommand } from "./commands/init.js";
+import { setupOpenclawCommand } from "./commands/setup-openclaw.js";
 import { vaultCommand } from "./commands/vault.js";
 
 const DATA_DIR = resolve(process.cwd(), "data");
@@ -22,6 +23,11 @@ async function main(): Promise<void> {
 
 	if (command === "init") {
 		await initCommand(DATA_DIR);
+		return;
+	}
+
+	if (command === "setup" && args[0] === "openclaw") {
+		await setupOpenclawCommand(DATA_DIR);
 		return;
 	}
 
@@ -50,11 +56,12 @@ async function main(): Promise<void> {
 			console.log(`Sentinel — Secure Agent Runtime
 
 Usage:
-  sentinel init          First-time setup (master password, API key)
-  sentinel chat          Start interactive agent session
-  sentinel vault <cmd>   Manage credentials (list, add, remove)
-  sentinel audit [N]     View recent audit log entries (default: 20)
-  sentinel config        Show current configuration`);
+  sentinel init              First-time setup (master password, API key)
+  sentinel chat              Start interactive agent session
+  sentinel vault <cmd>       Manage credentials (list, add, remove)
+  sentinel audit [N]         View recent audit log entries (default: 20)
+  sentinel config            Show current configuration
+  sentinel setup openclaw    Configure OpenClaw integration`);
 			break;
 	}
 }

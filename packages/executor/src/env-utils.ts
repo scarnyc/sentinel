@@ -6,7 +6,7 @@ export function stripSensitiveEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 	const cleaned: NodeJS.ProcessEnv = {};
 	for (const [key, value] of Object.entries(env)) {
 		if (STRIPPED_ENV_KEYS.has(key)) continue;
-		if (STRIPPED_ENV_PREFIXES.some((p) => key.startsWith(p))) continue;
+		if (STRIPPED_ENV_PREFIXES.some((p: string) => key.startsWith(p))) continue;
 		cleaned[key] = value;
 	}
 	return cleaned;

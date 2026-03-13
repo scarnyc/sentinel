@@ -12,7 +12,12 @@ export {
 	type AuditEntry,
 	AuditEntrySchema,
 } from "./audit.js";
-
+export {
+	type ClassifyRequest,
+	ClassifyRequestSchema,
+	type ClassifyResponse,
+	ClassifyResponseSchema,
+} from "./classify.js";
 export {
 	type ClassificationOverride,
 	ClassificationOverrideSchema,
@@ -41,6 +46,16 @@ export {
 	STRIPPED_ENV_KEYS,
 	STRIPPED_ENV_PREFIXES,
 } from "./credential-patterns.js";
+export {
+	type DelegateCodeParams,
+	DelegateCodeParamsSchema,
+} from "./delegate-code.js";
+export {
+	type FilterOutputRequest,
+	FilterOutputRequestSchema,
+	type FilterOutputResponse,
+	FilterOutputResponseSchema,
+} from "./filter-output.js";
 export {
 	CALENDAR_CREATE_PATTERNS,
 	GMAIL_CONTENT_PATTERNS,
