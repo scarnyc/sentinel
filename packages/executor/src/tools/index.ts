@@ -75,7 +75,7 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): ToolRegis
 		return executeEditFile(parsed, manifestId, options.allowedRoots);
 	});
 
-	// SENTINEL: G4 — per-agent GWS scope restriction via closure-captured scopes
+	// SENTINEL: G4/G5 — per-agent GWS scope restriction + default-deny via closure-captured context
 	registry.registerBuiltin("gws", (params, manifestId, agentId) => {
 		const parsed = GwsParamsSchema.parse(params);
 		return executeGws(parsed, manifestId, {
@@ -83,6 +83,7 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): ToolRegis
 			scopes: options.gwsScopes,
 			vault: options.vault,
 			integrityConfig: options.gwsIntegrity,
+			gwsDefaultDeny: options.gwsIntegrity?.gwsDefaultDeny,
 		});
 	});
 

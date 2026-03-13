@@ -3,6 +3,7 @@ import { AuditLogger } from "@sentinel/audit";
 import { CredentialVault } from "@sentinel/crypto";
 import { getDefaultConfig, validateConfig } from "@sentinel/policy";
 import { ensureDockerAuth } from "./docker-auth.js";
+import { applyDockerDefaults } from "./docker-defaults.js";
 import { createApp } from "./server.js";
 import { createToolRegistry } from "./tools/index.js";
 
@@ -19,6 +20,18 @@ try {
 	process.exit(1);
 }
 validated = ensureDockerAuth(validated);
+
+// SENTINEL: G2, G4, G5 — Docker GWS security defaults
+const dockerResult = applyDockerDefaults(validated, process.env);
+if (dockerResult.fatal) {
+	console.error(dockerResult.fatal);
+	process.exit(1);
+}
+for (const warning of dockerResult.warnings) {
+	console.warn(warning);
+}
+validated = dockerResult.config;
+
 const config = Object.freeze(structuredClone(validated));
 
 const auditLogger = new AuditLogger(config.auditLogPath);
@@ -37,6 +50,12 @@ if (vaultPassword && config.vaultPath) {
 		console.warn(
 			`[sentinel] Vault open failed — falling back to env vars: ${err instanceof Error ? err.message : "Unknown"}`,
 		);
+		// SENTINEL: G7 — FATAL log on vault failure in Docker
+		if (process.env.SENTINEL_DOCKER === "true") {
+			console.error(
+				"[sentinel] CRITICAL: Vault open failed in Docker — GWS will be unavailable, LLM proxy uses env vars",
+			);
+		}
 	}
 }
 

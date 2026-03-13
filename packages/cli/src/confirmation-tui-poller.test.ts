@@ -1,4 +1,3 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PendingConfirmation } from "./confirmation-tui.js";
 
@@ -18,32 +17,21 @@ const SAMPLE: PendingConfirmation = {
 	reason: "Read-only",
 };
 
-let server: Server;
-let serverPort: number;
-let executorUrl: string;
-let handler: (req: IncomingMessage, res: ServerResponse) => void;
+const mockFetch = vi.fn();
+const executorUrl = "http://localhost:9999";
 
-beforeEach(async () => {
-	handler = (_req, res) => {
-		res.writeHead(200, { "Content-Type": "application/json" });
-		res.end("[]");
-	};
-
-	server = createServer((req, res) => handler(req, res));
-	await new Promise<void>((resolve) => {
-		server.listen(0, "127.0.0.1", () => {
-			const addr = server.address();
-			if (addr && typeof addr === "object") {
-				serverPort = addr.port;
-				executorUrl = `http://127.0.0.1:${serverPort}`;
-			}
-			resolve();
-		});
-	});
+beforeEach(() => {
+	vi.stubGlobal("fetch", mockFetch);
+	// Default: return empty pending list
+	mockFetch.mockImplementation(async () => ({
+		ok: true,
+		status: 200,
+		json: async () => [],
+	}));
 });
 
-afterEach(async () => {
-	await new Promise<void>((resolve) => server.close(() => resolve()));
+afterEach(() => {
+	vi.unstubAllGlobals();
 });
 
 describe("startConfirmationPoller", () => {
@@ -56,21 +44,25 @@ describe("startConfirmationPoller", () => {
 	it("deduplicates confirmations by manifestId", async () => {
 		const confirmCalls: string[] = [];
 
-		handler = (req, res) => {
-			if (req.url === "/pending-confirmations") {
-				res.writeHead(200, { "Content-Type": "application/json" });
-				// Return same ID twice in one response
-				res.end(JSON.stringify([SAMPLE, SAMPLE]));
-			} else if (req.url?.startsWith("/confirm/")) {
-				const id = req.url.split("/confirm/")[1];
-				confirmCalls.push(id);
-				res.writeHead(200, { "Content-Type": "application/json" });
-				res.end(JSON.stringify({ status: "approved" }));
-			} else {
-				res.writeHead(404);
-				res.end();
+		mockFetch.mockImplementation(async (url: string) => {
+			if (url.includes("/pending-confirmations")) {
+				return {
+					ok: true,
+					status: 200,
+					json: async () => [SAMPLE, SAMPLE],
+				};
 			}
-		};
+			if (url.includes("/confirm/")) {
+				const id = url.split("/confirm/")[1];
+				confirmCalls.push(id);
+				return {
+					ok: true,
+					status: 200,
+					json: async () => ({ status: "approved" }),
+				};
+			}
+			return { ok: false, status: 404 };
+		});
 
 		const ctrl = new AbortController();
 		const promise = startConfirmationPoller(executorUrl, ctrl.signal);
@@ -85,10 +77,10 @@ describe("startConfirmationPoller", () => {
 	it("handles non-ok poll response without crashing", async () => {
 		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-		handler = (_req, res) => {
-			res.writeHead(503);
-			res.end();
-		};
+		mockFetch.mockImplementation(async () => ({
+			ok: false,
+			status: 503,
+		}));
 
 		const ctrl = new AbortController();
 		const promise = startConfirmationPoller(executorUrl, ctrl.signal);
@@ -104,10 +96,11 @@ describe("startConfirmationPoller", () => {
 	it("handles invalid poll response format gracefully", async () => {
 		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-		handler = (_req, res) => {
-			res.writeHead(200, { "Content-Type": "application/json" });
-			res.end(JSON.stringify({ notAnArray: true }));
-		};
+		mockFetch.mockImplementation(async () => ({
+			ok: true,
+			status: 200,
+			json: async () => ({ notAnArray: true }),
+		}));
 
 		const ctrl = new AbortController();
 		const promise = startConfirmationPoller(executorUrl, ctrl.signal);
@@ -124,24 +117,27 @@ describe("startConfirmationPoller", () => {
 		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 		let postAttempts = 0;
 
-		handler = (req, res) => {
-			if (req.url === "/pending-confirmations") {
-				res.writeHead(200, { "Content-Type": "application/json" });
-				res.end(JSON.stringify([SAMPLE]));
-			} else if (req.url?.startsWith("/confirm/")) {
+		mockFetch.mockImplementation(async (url: string) => {
+			if (url.includes("/pending-confirmations")) {
+				return {
+					ok: true,
+					status: 200,
+					json: async () => [SAMPLE],
+				};
+			}
+			if (url.includes("/confirm/")) {
 				postAttempts++;
 				if (postAttempts === 1) {
-					// Destroy the connection to simulate network error
-					res.destroy();
-					return;
+					throw new Error("Connection reset");
 				}
-				res.writeHead(200, { "Content-Type": "application/json" });
-				res.end(JSON.stringify({ status: "approved" }));
-			} else {
-				res.writeHead(404);
-				res.end();
+				return {
+					ok: true,
+					status: 200,
+					json: async () => ({ status: "approved" }),
+				};
 			}
-		};
+			return { ok: false, status: 404 };
+		});
 
 		const ctrl = new AbortController();
 		const promise = startConfirmationPoller(executorUrl, ctrl.signal);
@@ -156,27 +152,24 @@ describe("startConfirmationPoller", () => {
 	});
 
 	it("posts correct approval decision to executor", async () => {
-		let receivedBody: string | undefined;
-
-		handler = (req, res) => {
-			if (req.url === "/pending-confirmations") {
-				res.writeHead(200, { "Content-Type": "application/json" });
-				res.end(JSON.stringify([SAMPLE]));
-			} else if (req.url?.startsWith("/confirm/")) {
-				let body = "";
-				req.on("data", (chunk: Buffer) => {
-					body += chunk.toString();
-				});
-				req.on("end", () => {
-					receivedBody = body;
-					res.writeHead(200, { "Content-Type": "application/json" });
-					res.end(JSON.stringify({ status: "approved" }));
-				});
-			} else {
-				res.writeHead(404);
-				res.end();
+		mockFetch.mockImplementation(async (url: string | URL | Request, _init?: RequestInit) => {
+			const urlStr = String(url);
+			if (urlStr.includes("/pending-confirmations")) {
+				return {
+					ok: true,
+					status: 200,
+					json: async () => [SAMPLE],
+				};
 			}
-		};
+			if (urlStr.includes("/confirm/")) {
+				return {
+					ok: true,
+					status: 200,
+					json: async () => ({ status: "approved" }),
+				};
+			}
+			return { ok: false, status: 404 };
+		});
 
 		const ctrl = new AbortController();
 		const promise = startConfirmationPoller(executorUrl, ctrl.signal);
@@ -185,8 +178,13 @@ describe("startConfirmationPoller", () => {
 		ctrl.abort();
 		await promise;
 
-		expect(receivedBody).toBeDefined();
-		const parsed = JSON.parse(receivedBody as string);
+		// Find the confirm POST call and inspect its body
+		const confirmCall = mockFetch.mock.calls.find((args: unknown[]) =>
+			String(args[0]).includes("/confirm/"),
+		);
+		expect(confirmCall).toBeDefined();
+		const init = (confirmCall as unknown[])[1] as RequestInit;
+		const parsed = JSON.parse(init.body as string);
 		expect(parsed).toEqual({ approved: true });
 	});
 });

@@ -76,7 +76,7 @@ describe("writeMtlsCerts + readMtlsCerts", () => {
 	});
 });
 
-describe("mTLS handshake", () => {
+describe.skipIf(process.env.CI_SANDBOX === "true")("mTLS handshake", () => {
 	function startServer(
 		serverCert: string,
 		serverKey: string,

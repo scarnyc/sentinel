@@ -305,6 +305,53 @@ describe("executeGws", () => {
 		});
 	});
 
+	describe("gwsDefaultDeny enforcement (G5)", () => {
+		it("denies agent without scope entry when gwsDefaultDeny=true", async () => {
+			const scopes: GwsAgentScopes = {
+				"other-agent": { allowedServices: ["gmail"] },
+			};
+			const result = await executeGws(makeParams({ service: "gmail" }), "test-id", {
+				agentId: "unconfigured-agent",
+				scopes,
+				gwsDefaultDeny: true,
+			});
+			expect(result.success).toBe(false);
+			expect(result.error).toContain("gwsDefaultDeny=true");
+			expect(result.error).toContain("unconfigured-agent");
+			expect(mockExeca).not.toHaveBeenCalled();
+		});
+
+		it("warns but allows when gwsDefaultDeny=false (backward compat)", async () => {
+			mockExeca.mockResolvedValue({ exitCode: 0, stdout: "{}", stderr: "" });
+			const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+			const scopes: GwsAgentScopes = {
+				"other-agent": { allowedServices: ["gmail"] },
+			};
+			const result = await executeGws(makeParams({ service: "gmail" }), "test-id", {
+				agentId: "unconfigured-agent",
+				scopes,
+				gwsDefaultDeny: false,
+			});
+			expect(result.success).toBe(true);
+			expect(mockExeca).toHaveBeenCalled();
+			warnSpy.mockRestore();
+		});
+
+		it("allows agent WITH scope entry when gwsDefaultDeny=true", async () => {
+			mockExeca.mockResolvedValue({ exitCode: 0, stdout: "{}", stderr: "" });
+			const scopes: GwsAgentScopes = {
+				"scoped-agent": { allowedServices: ["gmail"] },
+			};
+			const result = await executeGws(makeParams({ service: "gmail" }), "test-id", {
+				agentId: "scoped-agent",
+				scopes,
+				gwsDefaultDeny: true,
+			});
+			expect(result.success).toBe(true);
+			expect(mockExeca).toHaveBeenCalled();
+		});
+	});
+
 	describe("unconfigured agent scope warning (L2)", () => {
 		it("logs warning when agent has ID but no scope entry", async () => {
 			mockExeca.mockResolvedValue({ exitCode: 0, stdout: "{}", stderr: "" });
@@ -769,6 +816,7 @@ describe("executeGws", () => {
 					verifyBinary: false,
 					pinnedVersionPolicy: "minimum",
 					vulnerableVersions: [],
+					gwsDefaultDeny: false,
 					allowedOAuthScopes: ["https://www.googleapis.com/auth/gmail.modify"],
 				},
 			});
