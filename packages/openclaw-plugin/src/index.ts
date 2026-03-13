@@ -102,12 +102,19 @@ export function createSentinelPlugin(
 				// auto_approve — allow through
 				return { block: false };
 			} catch (error) {
+				const errMsg = error instanceof Error ? error.message : "Unknown";
+				// SENTINEL: Always log classification errors, even in fail-open (HIGH-2 security fix)
+				console.error(`[sentinel-plugin] Classification error: ${errMsg}`);
 				if (resolved.failMode === "closed") {
 					return {
 						block: true,
-						blockReason: `Sentinel error: ${error instanceof Error ? error.message : "Unknown"}`,
+						blockReason: `Sentinel error: ${errMsg}`,
 					};
 				}
+				// Fail-open: allow through but with logged warning
+				console.warn(
+					`[sentinel-plugin] WARN: fail-open allowing unclassified tool call for ${ctx.toolName}`,
+				);
 				return { block: false };
 			}
 		},

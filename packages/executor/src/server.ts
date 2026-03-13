@@ -2,6 +2,7 @@ import type { AuditLogger } from "@sentinel/audit";
 import type { CredentialVault } from "@sentinel/crypto";
 import { LoopGuard, RateLimiter } from "@sentinel/policy";
 import type { ActionManifest, AgentCard, PolicyDecision, SentinelConfig } from "@sentinel/types";
+import { redactAll } from "@sentinel/types";
 import { Hono } from "hono";
 import { z } from "zod";
 import { createAuthMiddleware } from "./auth-middleware.js";
@@ -202,18 +203,48 @@ export function createApp(
 	if (delegationQueue) {
 		app.get("/pending-delegations", (c) => {
 			const pending = delegationQueue.getPending();
-			return c.json(pending);
+			// SENTINEL: Redact credential patterns from task strings (MEDIUM-3)
+			const sanitized = pending.map((d) => ({
+				...d,
+				task: redactAll(d.task),
+			}));
+			return c.json(sanitized);
 		});
 
 		app.post("/delegation-status/:id", async (c) => {
 			const { id } = c.req.param();
-			const raw = await c.req.json();
-			const status = (raw as { status?: string }).status;
-			const prUrl = (raw as { prUrl?: string }).prUrl;
-			if (!status) {
-				return c.json({ error: "Missing status field" }, 400);
+			// SENTINEL: Validate delegation status updates (HIGH-1 security fix)
+			const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+			if (!uuidRegex.test(id)) {
+				return c.json({ error: "Invalid delegation ID format" }, 400);
 			}
-			delegationQueue.updateStatus(id, status, prUrl);
+			const raw = await c.req.json();
+			const DelegationStatusSchema = z.object({
+				status: z.enum(["running", "completed", "failed"]),
+				prUrl: z.string().url().optional(),
+			});
+			const parsed = DelegationStatusSchema.safeParse(raw);
+			if (!parsed.success) {
+				return c.json({ error: `Invalid body: ${parsed.error.message}` }, 400);
+			}
+			delegationQueue.updateStatus(id, parsed.data.status, parsed.data.prUrl);
+
+			// SENTINEL: Audit delegation status transitions (MEDIUM-4)
+			auditLogger.log({
+				id: crypto.randomUUID(),
+				timestamp: new Date().toISOString(),
+				manifestId: id,
+				sessionId: "delegation",
+				agentId: "system",
+				tool: "delegate.code",
+				category: "write",
+				decision: "allow",
+				parameters_summary: `status=${parsed.data.status}`,
+				result: "success",
+				duration_ms: 0,
+				source: "sentinel",
+			});
+
 			return c.json({ ok: true });
 		});
 	}

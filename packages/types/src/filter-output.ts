@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const FilterOutputRequestSchema = z.object({
-	output: z.string(),
+	output: z.string().max(1_048_576),
 	tool: z.string().min(1).optional(),
 	agentId: z.string().min(1),
 });
