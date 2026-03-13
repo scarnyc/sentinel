@@ -2,6 +2,7 @@ import type { ToolResult } from "@sentinel/types";
 import { execa, execaCommand } from "execa";
 import { stripSensitiveEnv } from "../env-utils.js";
 import { truncateBashOutput } from "../output-truncation.js";
+import { isPathAllowed } from "./path-guard.js";
 
 async function detectFirejail(): Promise<boolean> {
 	try {
@@ -20,6 +21,13 @@ async function isFirejailAvailable(): Promise<boolean> {
 		firejailDetection = detectFirejail();
 		firejailDetection.then((available) => {
 			if (!available) {
+				// SENTINEL: C3 fix — hard failure in Docker mode when firejail is missing
+				if (process.env.SENTINEL_DOCKER === "true") {
+					console.error(
+						"FATAL: SENTINEL_BASH_SANDBOX=firejail but firejail not found in Docker mode — refusing to execute bash unsandboxed",
+					);
+					process.exit(1);
+				}
 				console.warn(
 					"SENTINEL_BASH_SANDBOX=firejail but firejail not found; falling back to unsandboxed execution",
 				);
@@ -145,6 +153,32 @@ const DENIED_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
 			/(?:\/usr)?\/s?bin\/(cat|head|tail|less|more|tac|nl|od|xxd|hexdump|base64|strings)\b.*vault\.enc\b/,
 		reason: "Command reads a sensitive file (full-path bypass)",
 	},
+	// SENTINEL: M5 — sqlite3 direct database access denied
+	{
+		pattern: /(?:^|[|;&]\s*)sqlite3\b/,
+		reason: "Direct database access denied",
+	},
+	{
+		pattern: /(?:^|[|;&]\s*)sqlite3_analyzer\b/,
+		reason: "Direct database access denied",
+	},
+	{
+		pattern: /(?:\/usr)?\/s?bin\/sqlite3\b/,
+		reason: "Direct database access denied (full-path bypass)",
+	},
+	// SENTINEL: I4 fix — sqlite3 bypass via env/command/./ prefixes and subshell execution
+	{
+		pattern: /(?:^|[|;&]\s*)(?:env\s+|command\s+|\.\/)sqlite3\b/,
+		reason: "Direct database access denied (prefix bypass)",
+	},
+	{
+		pattern: /\$\(\s*sqlite3\b/,
+		reason: "Direct database access denied (subshell bypass)",
+	},
+	{
+		pattern: /`[^`]*sqlite3\b/,
+		reason: "Direct database access denied (backtick bypass)",
+	},
 	// SENTINEL: Pipe-to-shell — command output piped to shell interpreter (MEDIUM-3)
 	{
 		pattern: /\|\s*(sh|bash|zsh|dash|eval)\b/,
@@ -185,7 +219,11 @@ interface BashParams {
 	timeout?: number;
 }
 
-export async function executeBash(params: BashParams, manifestId: string): Promise<ToolResult> {
+export async function executeBash(
+	params: BashParams,
+	manifestId: string,
+	allowedRoots?: readonly string[],
+): Promise<ToolResult> {
 	const start = Date.now();
 
 	const denyReason = isDeniedBashCommand(params.command);
@@ -196,6 +234,19 @@ export async function executeBash(params: BashParams, manifestId: string): Promi
 			error: denyReason,
 			duration_ms: Date.now() - start,
 		};
+	}
+
+	// SENTINEL: M1 — cwd must be within allowedRoots to prevent path whitelist bypass
+	if (params.cwd && allowedRoots && allowedRoots.length > 0) {
+		const cwdCheck = await isPathAllowed(params.cwd, allowedRoots);
+		if (!cwdCheck.allowed) {
+			return {
+				manifestId,
+				success: false,
+				error: "Working directory outside allowed roots",
+				duration_ms: Date.now() - start,
+			};
+		}
 	}
 
 	const timeout = Math.min(Math.max(params.timeout ?? DEFAULT_TIMEOUT_MS, 1), MAX_TIMEOUT_MS);

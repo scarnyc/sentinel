@@ -40,13 +40,27 @@ function matchOverride(condition: string, parameters: Record<string, unknown>): 
 			);
 			return true;
 		}
+		// SENTINEL: L11 — ReDoS guard: detect nested quantifiers before regex exec (C2 fix)
+		// Catches: adjacent quantifiers (a++, a*+), group-with-quantifier followed by quantifier ((a+)+),
+		// repeated .* segments, and groups containing alternation with quantifier followed by group quantifier
+		if (
+			/(\+|\*|\{[^}]*\})\s*(\+|\*|\{[^}]*\})/.test(pattern) ||
+			/(\.\*){2,}/.test(pattern) ||
+			/\([^)]*[+*][^)]*\)[+*{]/.test(pattern)
+		) {
+			console.warn(
+				"[classifier] ReDoS protection: nested quantifier detected in pattern, applying override (fail-safe)",
+			);
+			return true;
+		}
 		try {
 			return new RegExp(pattern).test(String(parameters[key]));
 		} catch (regexErr) {
+			// SENTINEL: C4 fix — fail-safe on invalid regex (consistent with ReDoS guards above)
 			console.warn(
-				`[classifier] Invalid regex in override: ${regexErr instanceof Error ? regexErr.message : String(regexErr)}`,
+				`[classifier] Invalid regex in override (applying fail-safe): ${regexErr instanceof Error ? regexErr.message : String(regexErr)}`,
 			);
-			return false;
+			return true;
 		}
 	}
 

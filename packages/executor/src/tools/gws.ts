@@ -64,6 +64,13 @@ export async function executeGws(
 		}
 	}
 
+	// SENTINEL: L2 — Warn when agent has ID but no scope configuration
+	if (ctx?.agentId && ctx?.scopes && !ctx.scopes[ctx.agentId]) {
+		console.warn(
+			`[gws:scope] Agent "${ctx.agentId}" has no scope entry — running with unrestricted GWS access`,
+		);
+	}
+
 	// SENTINEL: Binary integrity verification — hash, version pin, CVE check
 	const integrity = await ensureGwsIntegrity(ctx?.integrityConfig);
 	if (!integrity.ok) {

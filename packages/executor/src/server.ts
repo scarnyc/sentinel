@@ -115,7 +115,8 @@ export function createApp(
 		};
 	};
 	app.use("/execute", createBodyLimitMiddleware(10 * 1024 * 1024, "10MB"));
-	app.use("/proxy/llm/*", createBodyLimitMiddleware(100 * 1024 * 1024, "100MB"));
+	// SENTINEL: I7 — 25MB for LLM proxy to accommodate large context windows (200K+ tokens)
+	app.use("/proxy/llm/*", createBodyLimitMiddleware(25 * 1024 * 1024, "25MB"));
 
 	// SENTINEL: HMAC-SHA256 response signing for integrity verification (B4)
 	// Placed before routes so all responses (including /health) get signed
@@ -168,7 +169,7 @@ export function createApp(
 	});
 
 	// SENTINEL: Vault-based key injection when available, env var fallback otherwise
-	app.all("/proxy/llm/*", createLlmProxyHandler(vault));
+	app.all("/proxy/llm/*", createLlmProxyHandler(vault, auditLogger));
 
 	app.post("/execute", async (c) => {
 		try {
@@ -178,6 +179,26 @@ export function createApp(
 		} catch (error) {
 			if (error instanceof ManifestValidationError) {
 				return c.json({ error: error.message }, 400);
+			}
+			// SENTINEL: M7 — Best-effort audit for unhandled exceptions (Invariant #2)
+			try {
+				auditLogger.log({
+					id: crypto.randomUUID(),
+					timestamp: new Date().toISOString(),
+					manifestId: "unknown",
+					sessionId: "unknown",
+					agentId: "unknown",
+					tool: "unknown",
+					category: "dangerous",
+					decision: "allow",
+					parameters_summary: "",
+					result: "failure",
+					duration_ms: 0,
+				});
+			} catch (auditErr) {
+				console.error(
+					`[execute] Audit logging failed: ${auditErr instanceof Error ? auditErr.message : "Unknown"}`,
+				);
 			}
 			console.error(
 				`[execute] Unhandled error: ${error instanceof Error ? error.message : "Unknown"}`,

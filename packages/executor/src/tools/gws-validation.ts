@@ -1,4 +1,9 @@
-import { GMAIL_CONTENT_PATTERNS, GMAIL_SEND_PATTERNS, SENSITIVE_PATH_PATTERN } from "@sentinel/types";
+import {
+	containsCredential,
+	GMAIL_CONTENT_PATTERNS,
+	GMAIL_SEND_PATTERNS,
+	SENSITIVE_PATH_PATTERN,
+} from "@sentinel/types";
 import { extractAllStringValues } from "../moderation/email-scanner.js";
 
 const EMAIL_REGEX = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -150,6 +155,10 @@ export function validateGwsDriveArgs(
 		if (SENSITIVE_PATH_PATTERN.test(value)) {
 			errors.push("Targeting sensitive files is not allowed");
 		}
+		// SENTINEL: H3 — Block credential exfiltration via Drive uploads
+		if (containsCredential(value)) {
+			errors.push("Credential pattern detected in drive arguments");
+		}
 	}
 	return { valid: errors.length === 0, errors };
 }
@@ -159,6 +168,14 @@ export function validateGwsCalendarArgs(
 	args: Record<string, unknown>,
 ): ValidationResult {
 	const errors: string[] = [];
+
+	// SENTINEL: H3 — Block credential exfiltration via Calendar events
+	for (const value of extractAllStringValues(args)) {
+		if (containsCredential(value)) {
+			errors.push("Credential pattern detected in calendar arguments");
+		}
+	}
+
 	const attendees = args.attendees;
 	if (Array.isArray(attendees)) {
 		if (attendees.length > MAX_CALENDAR_ATTENDEES) {

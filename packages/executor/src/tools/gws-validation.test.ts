@@ -5,8 +5,8 @@ import {
 	validateGwsArgs,
 	validateGwsCalendarArgs,
 	validateGwsDriveArgs,
-	validateGwsGenericArgs,
 	validateGwsEmailContentArgs,
+	validateGwsGenericArgs,
 } from "./gws-validation.js";
 
 // Mock execa for the executeGws integration test
@@ -276,9 +276,7 @@ describe("validateGwsDriveArgs", () => {
 			resource: { metadata: { filePath: "../../.env" } },
 		});
 		expect(result.valid).toBe(false);
-		expect(result.errors).toEqual(
-			expect.arrayContaining([expect.stringContaining("traversal")]),
-		);
+		expect(result.errors).toEqual(expect.arrayContaining([expect.stringContaining("traversal")]));
 	});
 
 	it("rejects nested sensitive file targeting", () => {
@@ -286,9 +284,7 @@ describe("validateGwsDriveArgs", () => {
 			resource: { name: "server.pem" },
 		});
 		expect(result.valid).toBe(false);
-		expect(result.errors).toEqual(
-			expect.arrayContaining([expect.stringContaining("sensitive")]),
-		);
+		expect(result.errors).toEqual(expect.arrayContaining([expect.stringContaining("sensitive")]));
 	});
 });
 
@@ -315,6 +311,59 @@ describe("validateGwsCalendarArgs", () => {
 
 	it("passes normal calendar args without attendees", () => {
 		const result = validateGwsCalendarArgs("events.list", { calendarId: "primary" });
+		expect(result.valid).toBe(true);
+	});
+});
+
+describe("H3: Drive credential exfiltration scanning", () => {
+	it("blocks drive upload with Anthropic API key in args", () => {
+		const result = validateGwsDriveArgs("files.create", {
+			content: "config: sk-ant-abc123-testkey-in-drive",
+		});
+		expect(result.valid).toBe(false);
+		expect(result.errors).toEqual(
+			expect.arrayContaining([expect.stringContaining("Credential pattern detected in drive")]),
+		);
+	});
+
+	it("blocks drive upload with ya29. token in args", () => {
+		const result = validateGwsDriveArgs("files.create", {
+			content: "token: ya29.a0ARrdaM8_Wn3EfCnXoP_abc123-def456",
+		});
+		expect(result.valid).toBe(false);
+		expect(result.errors).toEqual(
+			expect.arrayContaining([expect.stringContaining("Credential pattern detected in drive")]),
+		);
+	});
+
+	it("passes normal drive content without credentials", () => {
+		const result = validateGwsDriveArgs("files.create", {
+			name: "report.pdf",
+			description: "Quarterly report for Q1 2026",
+			folderId: "abc123",
+		});
+		expect(result.valid).toBe(true);
+	});
+});
+
+describe("H3: Calendar credential exfiltration scanning", () => {
+	it("blocks calendar event with credential in description", () => {
+		const result = validateGwsCalendarArgs("events.insert", {
+			summary: "Sync meeting",
+			description: "Notes: sk-ant-abc123-leaked-key-here",
+		});
+		expect(result.valid).toBe(false);
+		expect(result.errors).toEqual(
+			expect.arrayContaining([expect.stringContaining("Credential pattern detected in calendar")]),
+		);
+	});
+
+	it("passes normal calendar content", () => {
+		const result = validateGwsCalendarArgs("events.insert", {
+			summary: "Team standup",
+			description: "Daily sync at 9am",
+			attendees: [{ email: "alice@example.com" }],
+		});
 		expect(result.valid).toBe(true);
 	});
 });

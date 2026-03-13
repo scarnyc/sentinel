@@ -57,7 +57,7 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): ToolRegis
 
 	registry.registerBuiltin("bash", (params, manifestId) => {
 		const parsed = BashParamsSchema.parse(params);
-		return executeBash(parsed, manifestId);
+		return executeBash(parsed, manifestId, options.allowedRoots);
 	});
 
 	registry.registerBuiltin("read_file", (params, manifestId) => {

@@ -380,6 +380,166 @@ describe("classify", () => {
 		});
 	});
 
+	describe("ReDoS nested-quantifier detection (L11)", () => {
+		// C2 fix: Use empty string as test input — it does NOT match (.+)+ normally,
+		// so the only way the override applies is through the fail-safe guard.
+		it("detects (.+)+ and applies override fail-safe", () => {
+			const manifest = makeManifest("test", { path: "" });
+			const customConfig: SentinelConfig = {
+				...config,
+				classifications: [
+					{
+						tool: "test",
+						defaultCategory: "read",
+						overrides: [
+							{
+								condition: "path~(.+)+",
+								category: "dangerous",
+								reason: "ReDoS pattern",
+							},
+						],
+					},
+				],
+			};
+			const result = classify(manifest, customConfig);
+			expect(result.category).toBe("dangerous"); // fail-safe: override applies via guard, not regex match
+		});
+
+		it("detects (.*)(.*) and applies override fail-safe", () => {
+			const manifest = makeManifest("test", { path: "" });
+			const customConfig: SentinelConfig = {
+				...config,
+				classifications: [
+					{
+						tool: "test",
+						defaultCategory: "read",
+						overrides: [
+							{
+								condition: "path~(.*)(.*)",
+								category: "dangerous",
+								reason: "ReDoS pattern",
+							},
+						],
+					},
+				],
+			};
+			const result = classify(manifest, customConfig);
+			expect(result.category).toBe("dangerous");
+		});
+
+		it("detects ([a-z]+)+ group-quantifier pattern", () => {
+			const manifest = makeManifest("test", { path: "" });
+			const customConfig: SentinelConfig = {
+				...config,
+				classifications: [
+					{
+						tool: "test",
+						defaultCategory: "read",
+						overrides: [
+							{
+								condition: "path~([a-z]+)+",
+								category: "dangerous",
+								reason: "ReDoS pattern",
+							},
+						],
+					},
+				],
+			};
+			const result = classify(manifest, customConfig);
+			expect(result.category).toBe("dangerous");
+		});
+
+		it("detects (a+)+ classic ReDoS pattern", () => {
+			const manifest = makeManifest("test", { path: "" });
+			const customConfig: SentinelConfig = {
+				...config,
+				classifications: [
+					{
+						tool: "test",
+						defaultCategory: "read",
+						overrides: [
+							{
+								condition: "path~(a+)+",
+								category: "dangerous",
+								reason: "ReDoS pattern",
+							},
+						],
+					},
+				],
+			};
+			const result = classify(manifest, customConfig);
+			expect(result.category).toBe("dangerous");
+		});
+
+		it("allows normal patterns without nested quantifiers", () => {
+			const manifest = makeManifest("test", { path: "/app/test.env" });
+			const customConfig: SentinelConfig = {
+				...config,
+				classifications: [
+					{
+						tool: "test",
+						defaultCategory: "read",
+						overrides: [
+							{
+								condition: "path~\\.env$",
+								category: "dangerous",
+								reason: "env file",
+							},
+						],
+					},
+				],
+			};
+			const result = classify(manifest, customConfig);
+			expect(result.category).toBe("dangerous"); // normal regex matches
+		});
+
+		it("allows single quantifiers (not nested)", () => {
+			const manifest = makeManifest("test", { path: "abc" });
+			const customConfig: SentinelConfig = {
+				...config,
+				classifications: [
+					{
+						tool: "test",
+						defaultCategory: "read",
+						overrides: [
+							{
+								condition: "path~a+b*c",
+								category: "write",
+								reason: "single quantifier",
+							},
+						],
+					},
+				],
+			};
+			const result = classify(manifest, customConfig);
+			// Single quantifiers should work normally (the pattern matches "abc")
+			expect(result.category).toBe("write");
+		});
+
+		it("applies fail-safe on invalid regex (C4)", () => {
+			const manifest = makeManifest("test", { path: "test" });
+			const customConfig: SentinelConfig = {
+				...config,
+				classifications: [
+					{
+						tool: "test",
+						defaultCategory: "read",
+						overrides: [
+							{
+								condition: "path~[invalid",
+								category: "dangerous",
+								reason: "malformed regex",
+							},
+						],
+					},
+				],
+			};
+			const result = classify(manifest, customConfig);
+			// Invalid regex should fail-safe: override applies (dangerous, not read)
+			expect(result.category).toBe("dangerous");
+		});
+	});
+
 	describe("GWS classification rules", () => {
 		it("gmail users.messages.list → read", () => {
 			const result = classify(

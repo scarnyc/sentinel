@@ -13,6 +13,7 @@ export const AuditEntrySchema = z.object({
 	result: z.enum([
 		"success",
 		"failure",
+		"pending",
 		"denied_by_user",
 		"blocked_by_policy",
 		"blocked_by_rate_limit",

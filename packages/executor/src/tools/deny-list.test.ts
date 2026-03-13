@@ -36,6 +36,16 @@ describe("isDeniedPath", () => {
 		expect(isDeniedPath("/app/credentials/auth.json")).toBe(true);
 	});
 
+	it("denies .db extension (M5)", () => {
+		expect(isDeniedPath("/app/data/audit.db")).toBe(true);
+		expect(isDeniedPath("test.db")).toBe(true);
+	});
+
+	it("denies .sqlite extension (M5)", () => {
+		expect(isDeniedPath("/app/data/memory.sqlite")).toBe(true);
+		expect(isDeniedPath("data.sqlite")).toBe(true);
+	});
+
 	it("allows normal files", () => {
 		expect(isDeniedPath("/app/data/notes.txt")).toBe(false);
 		expect(isDeniedPath("/app/data/config.json")).toBe(false);

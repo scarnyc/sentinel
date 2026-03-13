@@ -30,8 +30,10 @@ const vaultPassword = process.env.SENTINEL_VAULT_PASSWORD;
 if (vaultPassword && config.vaultPath) {
 	try {
 		vault = await CredentialVault.open(config.vaultPath, vaultPassword);
+		delete process.env.SENTINEL_VAULT_PASSWORD;
 		console.log("[sentinel] Vault opened — LLM proxy will use vault-based credentials");
 	} catch (err) {
+		delete process.env.SENTINEL_VAULT_PASSWORD;
 		console.warn(
 			`[sentinel] Vault open failed — falling back to env vars: ${err instanceof Error ? err.message : "Unknown"}`,
 		);

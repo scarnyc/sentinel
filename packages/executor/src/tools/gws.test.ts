@@ -11,7 +11,12 @@ vi.mock("./gws-auth.js", () => ({
 }));
 
 vi.mock("./gws-integrity.js", () => ({
-	ensureGwsIntegrity: vi.fn().mockResolvedValue({ ok: true, binaryPath: "/usr/local/bin/gws", version: "1.0.0", warnings: [] }),
+	ensureGwsIntegrity: vi.fn().mockResolvedValue({
+		ok: true,
+		binaryPath: "/usr/local/bin/gws",
+		version: "1.0.0",
+		warnings: [],
+	}),
 	isServiceAllowed: vi.fn().mockReturnValue(true),
 }));
 
@@ -297,6 +302,66 @@ describe("executeGws", () => {
 			});
 			expect(result.success).toBe(true);
 			expect(mockExeca).toHaveBeenCalled();
+		});
+	});
+
+	describe("unconfigured agent scope warning (L2)", () => {
+		it("logs warning when agent has ID but no scope entry", async () => {
+			mockExeca.mockResolvedValue({ exitCode: 0, stdout: "{}", stderr: "" });
+			const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+			const scopes: GwsAgentScopes = {
+				"other-agent": { denyServices: ["drive"] },
+			};
+			await executeGws(makeParams({ service: "gmail" }), "test-id", {
+				agentId: "unscoped-agent",
+				scopes,
+			});
+
+			const scopeWarnings = warnSpy.mock.calls.filter((call) =>
+				String(call[0]).includes("[gws:scope]"),
+			);
+			expect(scopeWarnings.length).toBeGreaterThan(0);
+			expect(String(scopeWarnings[0][0])).toContain("unscoped-agent");
+			expect(String(scopeWarnings[0][0])).toContain("unrestricted");
+			warnSpy.mockRestore();
+		});
+
+		it("does not warn when agent has a scope entry", async () => {
+			mockExeca.mockResolvedValue({ exitCode: 0, stdout: "{}", stderr: "" });
+			const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+			const scopes: GwsAgentScopes = {
+				"scoped-agent": { allowedServices: ["gmail"] },
+			};
+			await executeGws(makeParams({ service: "gmail" }), "test-id", {
+				agentId: "scoped-agent",
+				scopes,
+			});
+
+			const scopeWarnings = warnSpy.mock.calls.filter((call) =>
+				String(call[0]).includes("[gws:scope]"),
+			);
+			expect(scopeWarnings.length).toBe(0);
+			warnSpy.mockRestore();
+		});
+
+		it("does not warn when no agentId provided", async () => {
+			mockExeca.mockResolvedValue({ exitCode: 0, stdout: "{}", stderr: "" });
+			const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+			const scopes: GwsAgentScopes = {
+				"other-agent": { denyServices: ["drive"] },
+			};
+			await executeGws(makeParams({ service: "gmail" }), "test-id", {
+				scopes,
+			});
+
+			const scopeWarnings = warnSpy.mock.calls.filter((call) =>
+				String(call[0]).includes("[gws:scope]"),
+			);
+			expect(scopeWarnings.length).toBe(0);
+			warnSpy.mockRestore();
 		});
 	});
 

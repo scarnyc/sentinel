@@ -192,7 +192,30 @@ export async function handleExecute(
 		};
 	}
 
-	const rawResult = await handler(manifest.parameters, manifest.id, manifest.agentId);
+	// SENTINEL: H1 — Write pending audit entry BEFORE execution (Invariant #2).
+	// If the tool crashes or hangs, the pending record proves it was attempted.
+	// Append-only Merkle chain: we do NOT mutate this row; a second entry follows.
+	const start = Date.now();
+	auditLogger.log({
+		...auditBase,
+		id: crypto.randomUUID(),
+		result: "pending",
+		duration_ms: 0,
+	});
+
+	// SENTINEL: H1 — try/catch around handler to audit failures before re-throwing
+	let rawResult: ToolResult;
+	try {
+		rawResult = await handler(manifest.parameters, manifest.id, manifest.agentId);
+	} catch (handlerError) {
+		auditLogger.log({
+			...auditBase,
+			id: crypto.randomUUID(),
+			result: "failure",
+			duration_ms: Date.now() - start,
+		});
+		throw handlerError;
+	}
 
 	// 8. Filter credentials from tool output before it reaches the agent
 	const credFiltered = filterCredentials(rawResult);
