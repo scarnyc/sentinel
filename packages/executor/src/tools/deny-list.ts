@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 
-const EXTENSION_DENY = [".pem", ".key", ".enc"];
+const EXTENSION_DENY = [".pem", ".key", ".enc", ".db", ".sqlite"];
 
 const SUBSTRING_DENY = ["secret", "credential", "vault"];
 

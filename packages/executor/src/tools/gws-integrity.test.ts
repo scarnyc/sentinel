@@ -12,8 +12,8 @@ vi.mock("node:fs", () => ({
 
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
-import { execa } from "execa";
 import { GwsIntegrityConfigSchema } from "@sentinel/types";
+import { execa } from "execa";
 import {
 	computeBinaryHash,
 	ensureGwsIntegrity,
@@ -27,9 +27,6 @@ import {
 
 const mockExeca = execa as unknown as MockInstance;
 const mockCreateReadStream = createReadStream as unknown as MockInstance;
-
-// SHA-256 of empty string — used as a known test hash value
-const KNOWN_HASH = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 function mockReadStream(content: string): Readable {
 	const stream = new Readable({
@@ -71,15 +68,11 @@ describe("GwsIntegrityConfigSchema", () => {
 	});
 
 	it("rejects invalid SHA-256 hash format", () => {
-		expect(() =>
-			GwsIntegrityConfigSchema.parse({ expectedSha256: "not-a-hash" }),
-		).toThrow();
+		expect(() => GwsIntegrityConfigSchema.parse({ expectedSha256: "not-a-hash" })).toThrow();
 	});
 
 	it("rejects SHA-256 with uppercase letters", () => {
-		expect(() =>
-			GwsIntegrityConfigSchema.parse({ expectedSha256: "A".repeat(64) }),
-		).toThrow();
+		expect(() => GwsIntegrityConfigSchema.parse({ expectedSha256: "A".repeat(64) })).toThrow();
 	});
 
 	it("accepts valid SHA-256 hash", () => {
@@ -216,15 +209,11 @@ describe("isVulnerableVersion", () => {
 
 describe("isServiceAllowed", () => {
 	it("passes when service scope is in allowedOAuthScopes", () => {
-		expect(
-			isServiceAllowed("gmail", ["https://www.googleapis.com/auth/gmail.modify"]),
-		).toBe(true);
+		expect(isServiceAllowed("gmail", ["https://www.googleapis.com/auth/gmail.modify"])).toBe(true);
 	});
 
 	it("blocks when service scope is NOT in allowedOAuthScopes", () => {
-		expect(
-			isServiceAllowed("gmail", ["https://www.googleapis.com/auth/calendar"]),
-		).toBe(false);
+		expect(isServiceAllowed("gmail", ["https://www.googleapis.com/auth/calendar"])).toBe(false);
 	});
 
 	it("passes when allowedOAuthScopes is undefined (no cap)", () => {
@@ -233,22 +222,16 @@ describe("isServiceAllowed", () => {
 
 	it("blocks unknown services when scopes are configured", () => {
 		expect(
-			isServiceAllowed("unknown-service", [
-				"https://www.googleapis.com/auth/gmail.modify",
-			]),
+			isServiceAllowed("unknown-service", ["https://www.googleapis.com/auth/gmail.modify"]),
 		).toBe(false);
 	});
 
 	it("maps calendar service correctly", () => {
-		expect(
-			isServiceAllowed("calendar", ["https://www.googleapis.com/auth/calendar"]),
-		).toBe(true);
+		expect(isServiceAllowed("calendar", ["https://www.googleapis.com/auth/calendar"])).toBe(true);
 	});
 
 	it("maps drive service correctly", () => {
-		expect(
-			isServiceAllowed("drive", ["https://www.googleapis.com/auth/drive"]),
-		).toBe(true);
+		expect(isServiceAllowed("drive", ["https://www.googleapis.com/auth/drive"])).toBe(true);
 	});
 });
 
@@ -495,21 +478,23 @@ describe("ensureGwsIntegrity", () => {
 	});
 
 	it("strips sensitive env vars from subprocess calls", async () => {
-		mockExeca.mockImplementation((_cmd: string, _args?: string[], opts?: Record<string, unknown>) => {
-			// Verify extendEnv is false
-			expect(opts?.extendEnv).toBe(false);
-			// Verify env doesn't contain SENTINEL_ or ANTHROPIC_ prefixed vars
-			const env = opts?.env as NodeJS.ProcessEnv | undefined;
-			if (env) {
-				for (const key of Object.keys(env)) {
-					expect(key).not.toMatch(/^(SENTINEL_|ANTHROPIC_|OPENAI_|GEMINI_)/);
+		mockExeca.mockImplementation(
+			(_cmd: string, _args?: string[], opts?: Record<string, unknown>) => {
+				// Verify extendEnv is false
+				expect(opts?.extendEnv).toBe(false);
+				// Verify env doesn't contain SENTINEL_ or ANTHROPIC_ prefixed vars
+				const env = opts?.env as NodeJS.ProcessEnv | undefined;
+				if (env) {
+					for (const key of Object.keys(env)) {
+						expect(key).not.toMatch(/^(SENTINEL_|ANTHROPIC_|OPENAI_|GEMINI_)/);
+					}
 				}
-			}
-			if (_args?.[0] === "--version") {
-				return Promise.resolve({ exitCode: 0, stdout: "1.0.0" });
-			}
-			return Promise.resolve({ exitCode: 0, stdout: "/usr/local/bin/gws" });
-		});
+				if (_args?.[0] === "--version") {
+					return Promise.resolve({ exitCode: 0, stdout: "1.0.0" });
+				}
+				return Promise.resolve({ exitCode: 0, stdout: "/usr/local/bin/gws" });
+			},
+		);
 
 		// Set some sensitive env vars that should be stripped
 		process.env.SENTINEL_TEST_KEY = "should-be-stripped";

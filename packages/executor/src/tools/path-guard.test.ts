@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isPathAllowed } from "./path-guard.js";
 
 let tempDir: string;
@@ -15,17 +15,28 @@ afterEach(() => {
 });
 
 describe("isPathAllowed", () => {
-	it("allows any path when allowedRoots is undefined (Docker mode)", async () => {
+	it("warns in Docker mode when no roots configured (L1)", async () => {
 		process.env.SENTINEL_DOCKER = "true";
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 		const result = await isPathAllowed("/etc/passwd", undefined);
+		// Tool-level restriction enforces /app/data — path-guard warns but allows
 		expect(result.allowed).toBe(true);
+		expect(warnSpy).toHaveBeenCalledWith(
+			expect.stringContaining("Docker mode with no allowed roots"),
+		);
+		warnSpy.mockRestore();
 		delete process.env.SENTINEL_DOCKER;
 	});
 
-	it("allows any path when allowedRoots is empty (Docker mode)", async () => {
+	it("warns in Docker mode when empty roots provided (L1)", async () => {
 		process.env.SENTINEL_DOCKER = "true";
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 		const result = await isPathAllowed("/etc/passwd", []);
 		expect(result.allowed).toBe(true);
+		expect(warnSpy).toHaveBeenCalledWith(
+			expect.stringContaining("Docker mode with no allowed roots"),
+		);
+		warnSpy.mockRestore();
 		delete process.env.SENTINEL_DOCKER;
 	});
 
@@ -92,6 +103,45 @@ describe("isPathAllowed", () => {
 		if (!result.allowed) {
 			expect(result.reason).toContain("Cannot resolve real path");
 		}
+	});
+});
+
+describe("Docker mode fail-closed (L1)", () => {
+	afterEach(() => {
+		delete process.env.SENTINEL_DOCKER;
+		delete process.env.SENTINEL_ALLOWED_ROOTS;
+	});
+
+	it("warns but allows in Docker mode when no roots configured", async () => {
+		process.env.SENTINEL_DOCKER = "true";
+		delete process.env.SENTINEL_ALLOWED_ROOTS;
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const result = await isPathAllowed("/etc/passwd", undefined);
+		expect(result.allowed).toBe(true);
+		expect(warnSpy).toHaveBeenCalledWith(
+			expect.stringContaining("Docker mode with no allowed roots"),
+		);
+		warnSpy.mockRestore();
+	});
+
+	it("warns but allows in Docker mode when empty roots provided", async () => {
+		process.env.SENTINEL_DOCKER = "true";
+		delete process.env.SENTINEL_ALLOWED_ROOTS;
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const result = await isPathAllowed("/etc/passwd", []);
+		expect(result.allowed).toBe(true);
+		expect(warnSpy).toHaveBeenCalledWith(
+			expect.stringContaining("Docker mode with no allowed roots"),
+		);
+		warnSpy.mockRestore();
+	});
+
+	it("allows paths in Docker mode when roots ARE configured", async () => {
+		process.env.SENTINEL_DOCKER = "true";
+		const testFile = join(tempDir, "test.txt");
+		writeFileSync(testFile, "hello");
+		const result = await isPathAllowed(testFile, [tempDir]);
+		expect(result.allowed).toBe(true);
 	});
 });
 

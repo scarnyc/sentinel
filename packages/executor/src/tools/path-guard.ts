@@ -37,6 +37,12 @@ export async function isPathAllowed(
 	}
 
 	if (!effectiveRoots || effectiveRoots.length === 0) {
+		// SENTINEL: L1 — Warn in Docker mode when no roots configured (tool-level checks enforce /app/data)
+		if (process.env.SENTINEL_DOCKER === "true") {
+			console.warn(
+				"[path-guard] Docker mode with no allowed roots — relying on tool-level write restriction",
+			);
+		}
 		return { allowed: true, resolved: resolve(filePath) };
 	}
 

@@ -12,6 +12,12 @@ services:
       - ./data:/app/data:rw
     environment:
       - SENTINEL_DOCKER=true
+      # SENTINEL: H2 — Enable firejail bash sandboxing in Docker
+      - SENTINEL_BASH_SANDBOX=firejail
+    # SENTINEL: L6 — Container resource limits
+    mem_limit: 512m
+    cpus: "1.0"
+    pids_limit: 256
     # SENTINEL: Container hardening — defense-in-depth against RCE (G5)
     read_only: true
     tmpfs:
@@ -40,6 +46,13 @@ services:
       - EXECUTOR_URL=http://executor:3141
       # Route LLM calls through executor proxy — agent never holds API keys
       - ANTHROPIC_BASE_URL=http://executor:3141/proxy/llm
+    # SENTINEL: H4 — DNS restriction: agent resolves nothing externally
+    dns:
+      - "127.0.0.1"
+    # SENTINEL: L6 — Container resource limits
+    mem_limit: 256m
+    cpus: "0.5"
+    pids_limit: 128
     # SENTINEL: Container hardening — agent is fully restricted (G5)
     read_only: true
     tmpfs:

@@ -16,6 +16,8 @@ const CREDENTIAL_PATTERNS: readonly RegExp[] = [
 	/1\/\/[A-Za-z0-9_\-.]{60,}/g,
 	// Google OAuth2 authorization codes
 	/4\/[A-Za-z0-9_\-.]{40,}/g,
+	// Google OAuth2 client secrets
+	/GOCSPX-[A-Za-z0-9_-]{20,}/g,
 	// GitHub personal access tokens
 	/ghp_[A-Za-z0-9]{36,}/g,
 	// GitHub OAuth tokens
@@ -241,11 +243,12 @@ export const SENSITIVE_PATH_PATTERN =
 
 // ── Environment variable stripping patterns ──────────────────────────
 // Prefixes and specific keys to strip from subprocess environments.
-export const STRIPPED_ENV_PREFIXES = ["SENTINEL_", "ANTHROPIC_", "OPENAI_", "GEMINI_"];
+export const STRIPPED_ENV_PREFIXES = ["SENTINEL_", "ANTHROPIC_", "OPENAI_", "GEMINI_", "GOOGLE_"];
 export const STRIPPED_ENV_KEYS = new Set([
 	"MOLTBOT_GATEWAY_TOKEN",
 	"CF_ACCESS_AUD",
 	"R2_ACCESS_KEY_ID",
 	"R2_SECRET_ACCESS_KEY",
 	"CF_ACCOUNT_ID",
+	"GOOGLE_WORKSPACE_CLI_TOKEN",
 ]);

@@ -331,3 +331,83 @@ describe("bash deny-list: bypass prevention (MEDIUM-3)", () => {
 		expect(result.error ?? "").not.toContain("sensitive file");
 	});
 });
+
+describe("bash deny-list: sqlite3 direct database access (M5)", () => {
+	it("denies sqlite3 command", async () => {
+		const result = await executeBash({ command: "sqlite3 /app/data/audit.db" }, "test-id");
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("Direct database access denied");
+	});
+
+	it("denies sqlite3 after pipe", async () => {
+		const result = await executeBash(
+			{ command: "echo .dump | sqlite3 /app/data/audit.db" },
+			"test-id",
+		);
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("Direct database access denied");
+	});
+
+	it("denies sqlite3 after semicolon", async () => {
+		const result = await executeBash({ command: "echo hi; sqlite3 audit.db .dump" }, "test-id");
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("Direct database access denied");
+	});
+
+	it("denies sqlite3_analyzer command", async () => {
+		const result = await executeBash({ command: "sqlite3_analyzer audit.db" }, "test-id");
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("Direct database access denied");
+	});
+
+	it("denies full-path /usr/bin/sqlite3", async () => {
+		const result = await executeBash({ command: "/usr/bin/sqlite3 /app/data/audit.db" }, "test-id");
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("Direct database access denied");
+	});
+
+	it("denies full-path /usr/sbin/sqlite3", async () => {
+		const result = await executeBash({ command: "/usr/sbin/sqlite3 audit.db" }, "test-id");
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("Direct database access denied");
+	});
+
+	it("denies /bin/sqlite3", async () => {
+		const result = await executeBash({ command: "/bin/sqlite3 audit.db" }, "test-id");
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("Direct database access denied");
+	});
+
+	it("allows echo containing sqlite3 (not in command position)", async () => {
+		const result = await executeBash({ command: 'echo "use sqlite3"' }, "test-id");
+		expect(result.error ?? "").not.toContain("database access");
+	});
+});
+
+describe("bash cwd path whitelist (M1)", () => {
+	it("rejects cwd outside allowedRoots", async () => {
+		const result = await executeBash({ command: "echo hello", cwd: "/etc" }, "test-id", [
+			"/app/data",
+		]);
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("Working directory outside allowed roots");
+	});
+
+	it("allows cwd inside allowedRoots", async () => {
+		const result = await executeBash({ command: "echo hello", cwd: "/tmp" }, "test-id", ["/tmp"]);
+		expect(result.success).toBe(true);
+		expect(result.output).toContain("hello");
+	});
+
+	it("skips check when no allowedRoots provided", async () => {
+		const result = await executeBash({ command: "echo hello", cwd: "/tmp" }, "test-id");
+		expect(result.success).toBe(true);
+		expect(result.output).toContain("hello");
+	});
+
+	it("skips check when cwd not specified", async () => {
+		const result = await executeBash({ command: "echo hello" }, "test-id", ["/app/data"]);
+		expect(result.success).toBe(true);
+		expect(result.output).toContain("hello");
+	});
+});

@@ -1,3 +1,4 @@
+import type { AuditLogger } from "@sentinel/audit";
 import { type CredentialVault, useCredential } from "@sentinel/crypto";
 import { redactAllCredentialsWithEncoding } from "@sentinel/types";
 import type { Context } from "hono";
@@ -59,8 +60,12 @@ const HOST_AUTH_HEADERS: Record<string, { envVar: string; headerName: string; pr
  * Agent sends: POST /proxy/llm/<downstream-path> with an optional `x-llm-host`
  * header to select the provider (default: api.anthropic.com).
  */
-export function createLlmProxyHandler(vault?: CredentialVault): (c: Context) => Promise<Response> {
+export function createLlmProxyHandler(
+	vault?: CredentialVault,
+	auditLogger?: AuditLogger,
+): (c: Context) => Promise<Response> {
 	return async (c: Context): Promise<Response> => {
+		const proxyStart = Date.now();
 		// Extract the downstream path (everything after /proxy/llm)
 		const url = new URL(c.req.url);
 		const proxyPrefix = "/proxy/llm";
@@ -74,6 +79,26 @@ export function createLlmProxyHandler(vault?: CredentialVault): (c: Context) => 
 		const targetHost = c.req.header("x-llm-host") ?? "api.anthropic.com";
 
 		if (!ALLOWED_LLM_HOSTS.has(targetHost)) {
+			// SENTINEL: M8 — Audit blocked host requests
+			if (auditLogger) {
+				try {
+					auditLogger.log({
+						id: crypto.randomUUID(),
+						timestamp: new Date().toISOString(),
+						manifestId: crypto.randomUUID(),
+						sessionId: "system",
+						agentId: "agent",
+						tool: "llm_proxy",
+						category: "read",
+						decision: "block",
+						parameters_summary: `${c.req.method} ${targetHost}${downstreamPath}`,
+						result: "blocked_by_policy",
+						duration_ms: Date.now() - proxyStart,
+					});
+				} catch {
+					/* audit best-effort */
+				}
+			}
 			return c.json({ error: `Blocked: ${targetHost} is not an allowed LLM host` }, 403);
 		}
 
@@ -106,6 +131,26 @@ export function createLlmProxyHandler(vault?: CredentialVault): (c: Context) => 
 			ssrfResolvedIps = ssrfResult?.resolvedIps;
 		} catch (error) {
 			if (error instanceof SsrfError) {
+				// SENTINEL: M8 — Audit SSRF-blocked requests
+				if (auditLogger) {
+					try {
+						auditLogger.log({
+							id: crypto.randomUUID(),
+							timestamp: new Date().toISOString(),
+							manifestId: crypto.randomUUID(),
+							sessionId: "system",
+							agentId: "agent",
+							tool: "llm_proxy",
+							category: "read",
+							decision: "block",
+							parameters_summary: `${c.req.method} ${targetHost}${downstreamPath} [SSRF]`,
+							result: "blocked_by_policy",
+							duration_ms: Date.now() - proxyStart,
+						});
+					} catch {
+						/* audit best-effort */
+					}
+				}
 				return c.json({ error: "Blocked: SSRF protection" }, 403);
 			}
 			console.error(
@@ -131,9 +176,28 @@ export function createLlmProxyHandler(vault?: CredentialVault): (c: Context) => 
 					if (error instanceof Error && error.message.startsWith("No credential found")) {
 						// Key not in vault — fall through to env var path
 					} else {
-						console.error(
-							`[llm-proxy] Vault credential failed for llm/${targetHost}: ${error instanceof Error ? error.message : "Unknown"}`,
-						);
+						// SENTINEL: L5 — Never log error.message (may contain credential info)
+						console.error("[llm-proxy] Vault credential retrieval failed");
+						// SENTINEL: M8 — Audit credential retrieval failure
+						if (auditLogger) {
+							try {
+								auditLogger.log({
+									id: crypto.randomUUID(),
+									timestamp: new Date().toISOString(),
+									manifestId: crypto.randomUUID(),
+									sessionId: "system",
+									agentId: "agent",
+									tool: "llm_proxy",
+									category: "read",
+									decision: "block",
+									parameters_summary: `${c.req.method} ${targetHost}${downstreamPath} [credential-error]`,
+									result: "failure",
+									duration_ms: Date.now() - proxyStart,
+								});
+							} catch {
+								/* audit best-effort */
+							}
+						}
 						return c.json({ error: "LLM proxy credential error" }, 500);
 					}
 				}
@@ -204,6 +268,28 @@ export function createLlmProxyHandler(vault?: CredentialVault): (c: Context) => 
 			// The Response constructor will compute the correct value.
 			responseHeaders.delete("content-length");
 
+			// SENTINEL: M8 — Audit LLM proxy requests (metadata only, no body content)
+			if (auditLogger) {
+				const duration = Date.now() - proxyStart;
+				try {
+					auditLogger.log({
+						id: crypto.randomUUID(),
+						timestamp: new Date().toISOString(),
+						manifestId: crypto.randomUUID(),
+						sessionId: "system",
+						agentId: "agent",
+						tool: "llm_proxy",
+						category: "read",
+						decision: "auto_approve",
+						parameters_summary: `${c.req.method} ${targetHost}${downstreamPath}`,
+						result: upstreamResponse.status < 400 ? "success" : "failure",
+						duration_ms: duration,
+					});
+				} catch {
+					/* audit best-effort */
+				}
+			}
+
 			return new Response(filteredBody, {
 				status: upstreamResponse.status,
 				headers: responseHeaders,
@@ -214,6 +300,26 @@ export function createLlmProxyHandler(vault?: CredentialVault): (c: Context) => 
 			console.error(
 				`[llm-proxy] Upstream request failed: ${error instanceof Error ? error.message : "Unknown"}`,
 			);
+			// SENTINEL: M8 — Audit upstream errors
+			if (auditLogger) {
+				try {
+					auditLogger.log({
+						id: crypto.randomUUID(),
+						timestamp: new Date().toISOString(),
+						manifestId: crypto.randomUUID(),
+						sessionId: "system",
+						agentId: "agent",
+						tool: "llm_proxy",
+						category: "read",
+						decision: "auto_approve",
+						parameters_summary: `${c.req.method} ${targetHost}${downstreamPath} [upstream-error]`,
+						result: "failure",
+						duration_ms: Date.now() - proxyStart,
+					});
+				} catch {
+					/* audit best-effort */
+				}
+			}
 			return c.json({ error: "LLM proxy upstream error" }, 502);
 		} finally {
 			// Clean up auth header from forwardHeaders (both vault and env paths)

@@ -9,10 +9,15 @@ RUN npx tsc -b
 
 # Executor stage
 FROM node:22-alpine AS executor
-RUN apk add --no-cache dumb-init
+# SENTINEL: H2 — firejail for bash sandboxing in Docker
+RUN apk add --no-cache dumb-init firejail
 WORKDIR /app
 COPY --from=build /app/packages/ ./packages/
 COPY --from=build /app/node_modules ./node_modules/
+# SENTINEL: M9 — Remove dev dependencies and test files from production image
+RUN find /app/packages -name "*.test.ts" -delete && \
+    find /app/packages -name "*.test.js" -delete && \
+    find /app/packages -name "__tests__" -type d -exec rm -rf {} + 2>/dev/null; true
 RUN mkdir -p /app/data && chown node:node /app/data
 USER node
 EXPOSE 3141

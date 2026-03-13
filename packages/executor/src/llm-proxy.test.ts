@@ -556,6 +556,181 @@ describe("LLM Proxy", () => {
 	});
 });
 
+describe("LLM Proxy audit logging (M8)", () => {
+	it("logs audit entry on successful proxy request", async () => {
+		const mockAuditLogger = { log: vi.fn() };
+		const auditApp = new Hono();
+		auditApp.all(
+			"/proxy/llm/*",
+			createLlmProxyHandler(
+				undefined,
+				mockAuditLogger as unknown as import("@sentinel/audit").AuditLogger,
+			),
+		);
+
+		const mockResponse = new Response(JSON.stringify({ id: "msg_123" }), {
+			status: 200,
+			headers: { "Content-Type": "application/json" },
+		});
+		vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(mockResponse);
+
+		const res = await auditApp.request("/proxy/llm/v1/messages", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ model: "test" }),
+		});
+
+		expect(res.status).toBe(200);
+		expect(mockAuditLogger.log).toHaveBeenCalledOnce();
+		const entry = mockAuditLogger.log.mock.calls[0][0];
+		expect(entry.tool).toBe("llm_proxy");
+		expect(entry.result).toBe("success");
+		expect(entry.parameters_summary).toContain("POST");
+		expect(entry.parameters_summary).toContain("api.anthropic.com");
+		expect(entry.duration_ms).toBeGreaterThanOrEqual(0);
+	});
+
+	it("logs failure audit entry on upstream error status", async () => {
+		const mockAuditLogger = { log: vi.fn() };
+		const auditApp = new Hono();
+		auditApp.all(
+			"/proxy/llm/*",
+			createLlmProxyHandler(
+				undefined,
+				mockAuditLogger as unknown as import("@sentinel/audit").AuditLogger,
+			),
+		);
+
+		const mockResponse = new Response(JSON.stringify({ error: "bad" }), {
+			status: 500,
+			headers: { "Content-Type": "application/json" },
+		});
+		vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(mockResponse);
+
+		const res = await auditApp.request("/proxy/llm/v1/messages", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+
+		expect(res.status).toBe(500);
+		expect(mockAuditLogger.log).toHaveBeenCalledOnce();
+		const entry = mockAuditLogger.log.mock.calls[0][0];
+		expect(entry.result).toBe("failure");
+	});
+
+	it("logs audit entry on blocked host (SSRF)", async () => {
+		const mockAuditLogger = { log: vi.fn() };
+		const auditApp = new Hono();
+		auditApp.all(
+			"/proxy/llm/*",
+			createLlmProxyHandler(
+				undefined,
+				mockAuditLogger as unknown as import("@sentinel/audit").AuditLogger,
+			),
+		);
+
+		const res = await auditApp.request("/proxy/llm/v1/messages", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"x-llm-host": "evil.com",
+			},
+			body: JSON.stringify({}),
+		});
+
+		expect(res.status).toBe(403);
+		expect(mockAuditLogger.log).toHaveBeenCalledOnce();
+		const entry = mockAuditLogger.log.mock.calls[0][0];
+		expect(entry.result).toBe("blocked_by_policy");
+		expect(entry.decision).toBe("block");
+	});
+
+	it("logs audit entry on fetch error (502)", async () => {
+		const mockAuditLogger = { log: vi.fn() };
+		const auditApp = new Hono();
+		auditApp.all(
+			"/proxy/llm/*",
+			createLlmProxyHandler(
+				undefined,
+				mockAuditLogger as unknown as import("@sentinel/audit").AuditLogger,
+			),
+		);
+
+		vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new Error("ECONNREFUSED"));
+
+		const res = await auditApp.request("/proxy/llm/v1/messages", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+
+		expect(res.status).toBe(502);
+		expect(mockAuditLogger.log).toHaveBeenCalledOnce();
+		const entry = mockAuditLogger.log.mock.calls[0][0];
+		expect(entry.result).toBe("failure");
+	});
+
+	it("works without auditLogger (backward compat)", async () => {
+		const noAuditApp = new Hono();
+		noAuditApp.all("/proxy/llm/*", createLlmProxyHandler());
+
+		const mockResponse = new Response("{}", { status: 200 });
+		vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(mockResponse);
+
+		const res = await noAuditApp.request("/proxy/llm/v1/messages", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+
+		expect(res.status).toBe(200);
+	});
+});
+
+describe("LLM Proxy vault error message suppression (L5)", () => {
+	it("does not log error.message on vault failure", async () => {
+		const mkdtemp = (await import("node:fs/promises")).mkdtemp;
+		const rm = (await import("node:fs/promises")).rm;
+		const { tmpdir } = await import("node:os");
+		const { join } = await import("node:path");
+		const { CredentialVault } = await import("@sentinel/crypto");
+
+		const dir = await mkdtemp(join(tmpdir(), "sentinel-l5-"));
+		const vaultPath = join(dir, "vault.json");
+		const vault = await CredentialVault.create(vaultPath, "test-pass");
+
+		// Monkey-patch to simulate corruption
+		vault.retrieveBuffer = () => Buffer.from("not-valid-json");
+
+		delete process.env.ANTHROPIC_API_KEY;
+
+		const vaultApp = new Hono();
+		vaultApp.all("/proxy/llm/*", createLlmProxyHandler(vault));
+
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		const res = await vaultApp.request("/proxy/llm/v1/messages", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+
+		expect(res.status).toBe(500);
+		// The error log must NOT contain the original error message
+		for (const call of consoleSpy.mock.calls) {
+			const msg = String(call[0]);
+			expect(msg).not.toContain("llm/api.anthropic.com");
+			expect(msg).not.toContain("Unknown");
+		}
+		expect(consoleSpy).toHaveBeenCalledWith("[llm-proxy] Vault credential retrieval failed");
+
+		consoleSpy.mockRestore();
+		vault.destroy();
+		await rm(dir, { recursive: true, force: true });
+	});
+});
+
 describe("LLM Proxy with vault-based key retrieval", () => {
 	const tempDirs: string[] = [];
 

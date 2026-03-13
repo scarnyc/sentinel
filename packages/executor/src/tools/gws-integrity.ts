@@ -2,28 +2,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import type { GwsIntegrityConfig } from "@sentinel/types";
 import { execa } from "execa";
-
-// --- Env stripping (consistent with gws.ts) ---
-
-const STRIPPED_ENV_PREFIXES = ["SENTINEL_", "ANTHROPIC_", "OPENAI_", "GEMINI_"];
-const STRIPPED_ENV_KEYS = new Set([
-	"MOLTBOT_GATEWAY_TOKEN",
-	"CF_ACCESS_AUD",
-	"R2_ACCESS_KEY_ID",
-	"R2_SECRET_ACCESS_KEY",
-	"CF_ACCOUNT_ID",
-	"GOOGLE_WORKSPACE_CLI_TOKEN",
-]);
-
-function stripSensitiveEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-	const cleaned: NodeJS.ProcessEnv = {};
-	for (const [key, value] of Object.entries(env)) {
-		if (STRIPPED_ENV_KEYS.has(key)) continue;
-		if (STRIPPED_ENV_PREFIXES.some((p) => key.startsWith(p))) continue;
-		cleaned[key] = value;
-	}
-	return cleaned;
-}
+import { stripSensitiveEnv } from "../env-utils.js";
 
 const cleanEnv = stripSensitiveEnv(process.env);
 
@@ -119,10 +98,7 @@ export function validateVersion(
 
 // --- CVE blocklist ---
 
-export function isVulnerableVersion(
-	version: string,
-	vulnerableVersions: string[],
-): boolean {
+export function isVulnerableVersion(version: string, vulnerableVersions: string[]): boolean {
 	return vulnerableVersions.includes(version);
 }
 
@@ -140,10 +116,7 @@ const GWS_SERVICE_SCOPE_MAP: Record<string, string> = {
 	tasks: "https://www.googleapis.com/auth/tasks",
 };
 
-export function isServiceAllowed(
-	service: string,
-	allowedScopes?: string[],
-): boolean {
+export function isServiceAllowed(service: string, allowedScopes?: string[]): boolean {
 	// No system cap configured — allow all (backward compat)
 	if (!allowedScopes) return true;
 	const scope = GWS_SERVICE_SCOPE_MAP[service];
@@ -175,9 +148,7 @@ export function resetIntegrityCache(): void {
 	integrityCache.clear();
 }
 
-async function performIntegrityCheck(
-	config?: GwsIntegrityConfig,
-): Promise<IntegrityResult> {
+async function performIntegrityCheck(config?: GwsIntegrityConfig): Promise<IntegrityResult> {
 	const warnings: string[] = [];
 
 	// Step 1: Resolve binary
@@ -205,7 +176,8 @@ async function performIntegrityCheck(
 				binaryPath,
 				version: "",
 				warnings,
-				error: "verifyBinary is true but expectedSha256 is not set — cannot verify binary integrity",
+				error:
+					"verifyBinary is true but expectedSha256 is not set — cannot verify binary integrity",
 			};
 		}
 		try {
@@ -231,7 +203,9 @@ async function performIntegrityCheck(
 	} else if (config?.verifyBinary === false) {
 		// Intentional opt-out — no warning (user explicitly chose not to verify)
 	} else {
-		warnings.push("Binary hash verification not configured — set verifyBinary and expectedSha256 to enable");
+		warnings.push(
+			"Binary hash verification not configured — set verifyBinary and expectedSha256 to enable",
+		);
 	}
 
 	// Step 3: Get version (only after binary is verified)
@@ -280,9 +254,7 @@ async function performIntegrityCheck(
 	return { ok: true, binaryPath, version, warnings };
 }
 
-export async function ensureGwsIntegrity(
-	config?: GwsIntegrityConfig,
-): Promise<IntegrityResult> {
+export async function ensureGwsIntegrity(config?: GwsIntegrityConfig): Promise<IntegrityResult> {
 	const key = configCacheKey(config);
 	const cached = integrityCache.get(key);
 	if (cached) return cached;

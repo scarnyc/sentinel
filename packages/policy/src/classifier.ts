@@ -40,6 +40,13 @@ function matchOverride(condition: string, parameters: Record<string, unknown>): 
 			);
 			return true;
 		}
+		// SENTINEL: L11 — ReDoS guard: detect nested quantifiers before regex exec
+		if (/(\+|\*|\{[^}]*\})\s*(\+|\*|\{[^}]*\})/.test(pattern) || /(\.\*){2,}/.test(pattern)) {
+			console.warn(
+				"[classifier] ReDoS protection: nested quantifier detected in pattern, applying override (fail-safe)",
+			);
+			return true;
+		}
 		try {
 			return new RegExp(pattern).test(String(parameters[key]));
 		} catch (regexErr) {

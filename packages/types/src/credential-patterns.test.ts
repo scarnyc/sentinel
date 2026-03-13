@@ -4,6 +4,8 @@ import {
 	recursiveContainsCredential,
 	redactAllCredentials,
 	redactAllCredentialsWithEncoding,
+	STRIPPED_ENV_KEYS,
+	STRIPPED_ENV_PREFIXES,
 } from "./credential-patterns.js";
 
 describe("redactAllCredentials", () => {
@@ -310,6 +312,28 @@ describe("Stripe key detection", () => {
 
 	it("does not interfere with OpenAI sk- pattern", () => {
 		expect(containsCredential("sk-abcdefghijklmnopqrstuv")).toBe(true);
+	});
+});
+
+describe("Google OAuth client secret detection (M4)", () => {
+	it("detects GOCSPX- pattern via containsCredential", () => {
+		expect(containsCredential("secret: GOCSPX-abcdefghij1234567890ab")).toBe(true);
+	});
+
+	it("redacts GOCSPX- pattern", () => {
+		const result = redactAllCredentials("client_secret=GOCSPX-abcdefghij1234567890ab");
+		expect(result).not.toContain("GOCSPX-");
+		expect(result).toContain("[REDACTED]");
+	});
+});
+
+describe("STRIPPED_ENV environment stripping (M2)", () => {
+	it("GOOGLE_ prefix is in STRIPPED_ENV_PREFIXES", () => {
+		expect(STRIPPED_ENV_PREFIXES).toContain("GOOGLE_");
+	});
+
+	it("GOOGLE_WORKSPACE_CLI_TOKEN is in STRIPPED_ENV_KEYS (defense-in-depth)", () => {
+		expect(STRIPPED_ENV_KEYS.has("GOOGLE_WORKSPACE_CLI_TOKEN")).toBe(true);
 	});
 });
 

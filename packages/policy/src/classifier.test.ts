@@ -380,6 +380,97 @@ describe("classify", () => {
 		});
 	});
 
+	describe("ReDoS nested-quantifier detection (L11)", () => {
+		it("detects nested quantifiers (.+.+) and applies override fail-safe", () => {
+			const manifest = makeManifest("test", { path: "anything" });
+			const customConfig: SentinelConfig = {
+				...config,
+				classifications: [
+					{
+						tool: "test",
+						defaultCategory: "read",
+						overrides: [
+							{
+								condition: "path~(.+)+",
+								category: "dangerous",
+								reason: "ReDoS pattern",
+							},
+						],
+					},
+				],
+			};
+			const result = classify(manifest, customConfig);
+			expect(result.category).toBe("dangerous"); // fail-safe: override applies
+		});
+
+		it("detects nested quantifiers (.*.*) and applies override fail-safe", () => {
+			const manifest = makeManifest("test", { path: "anything" });
+			const customConfig: SentinelConfig = {
+				...config,
+				classifications: [
+					{
+						tool: "test",
+						defaultCategory: "read",
+						overrides: [
+							{
+								condition: "path~(.*)(.*)",
+								category: "dangerous",
+								reason: "ReDoS pattern",
+							},
+						],
+					},
+				],
+			};
+			const result = classify(manifest, customConfig);
+			expect(result.category).toBe("dangerous");
+		});
+
+		it("allows normal patterns without nested quantifiers", () => {
+			const manifest = makeManifest("test", { path: "/app/test.env" });
+			const customConfig: SentinelConfig = {
+				...config,
+				classifications: [
+					{
+						tool: "test",
+						defaultCategory: "read",
+						overrides: [
+							{
+								condition: "path~\\.env$",
+								category: "dangerous",
+								reason: "env file",
+							},
+						],
+					},
+				],
+			};
+			const result = classify(manifest, customConfig);
+			expect(result.category).toBe("dangerous"); // normal regex matches
+		});
+
+		it("allows single quantifiers (not nested)", () => {
+			const manifest = makeManifest("test", { path: "abc" });
+			const customConfig: SentinelConfig = {
+				...config,
+				classifications: [
+					{
+						tool: "test",
+						defaultCategory: "read",
+						overrides: [
+							{
+								condition: "path~a+b*c",
+								category: "write",
+								reason: "single quantifier",
+							},
+						],
+					},
+				],
+			};
+			const result = classify(manifest, customConfig);
+			// Single quantifiers should work normally (the pattern matches "abc")
+			expect(result.category).toBe("write");
+		});
+	});
+
 	describe("GWS classification rules", () => {
 		it("gmail users.messages.list → read", () => {
 			const result = classify(
