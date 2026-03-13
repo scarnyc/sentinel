@@ -181,6 +181,9 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
     devDependencies:
+      '@sentinel/openclaw-plugin':
+        specifier: workspace:*
+        version: link:../openclaw-plugin
       '@types/better-sqlite3':
         specifier: ^7.6.12
         version: 7.6.13

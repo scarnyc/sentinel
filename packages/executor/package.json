@@ -30,6 +30,7 @@
 		"zod": "^3.24.0"
 	},
 	"devDependencies": {
+		"@sentinel/openclaw-plugin": "workspace:*",
 		"@types/better-sqlite3": "^7.6.12",
 		"tsup": "^8.4.0",
 		"tsx": "^4.19.0",
