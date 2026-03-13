@@ -74,6 +74,8 @@ export const SentinelConfigSchema = z.object({
 	authToken: z.string().min(1).optional(),
 	gwsAgentScopes: GwsAgentScopesSchema.optional(),
 	gwsIntegrity: GwsIntegrityConfigSchema.optional(),
+	/** When true, agents without a GWS scope entry are denied (not just warned). Docker default: true. */
+	gwsDefaultDeny: z.boolean().default(false),
 	llm: z.object({
 		provider: z.literal("anthropic"),
 		model: z.string().min(1),

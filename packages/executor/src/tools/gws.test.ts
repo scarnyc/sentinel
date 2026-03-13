@@ -229,6 +229,50 @@ describe("executeGws", () => {
 		});
 	});
 
+	describe("gwsDefaultDeny fail-closed guards (G5 bypass fixes)", () => {
+		it("denies when gwsDefaultDeny=true and scopes is undefined", async () => {
+			const result = await executeGws(makeParams(), "test-id", {
+				agentId: "some-agent",
+				gwsDefaultDeny: true,
+				// scopes intentionally undefined — most common Docker deployment path
+			});
+			expect(result.success).toBe(false);
+			expect(result.error).toContain("no GWS agent scopes configured");
+			expect(mockExeca).not.toHaveBeenCalled();
+		});
+
+		it("denies when gwsDefaultDeny=true and scopes is empty object", async () => {
+			const result = await executeGws(makeParams(), "test-id", {
+				agentId: "some-agent",
+				scopes: {},
+				gwsDefaultDeny: true,
+			});
+			expect(result.success).toBe(false);
+			expect(result.error).toContain("no GWS scope entry configured");
+			expect(mockExeca).not.toHaveBeenCalled();
+		});
+
+		it("denies when gwsDefaultDeny=true and agentId is missing", async () => {
+			const result = await executeGws(makeParams(), "test-id", {
+				gwsDefaultDeny: true,
+				// agentId intentionally omitted
+			});
+			expect(result.success).toBe(false);
+			expect(result.error).toContain("agentId required");
+			expect(mockExeca).not.toHaveBeenCalled();
+		});
+
+		it("allows when gwsDefaultDeny=false and scopes is undefined (backward compat)", async () => {
+			mockExeca.mockResolvedValue({ exitCode: 0, stdout: "{}", stderr: "" });
+			const result = await executeGws(makeParams(), "test-id", {
+				agentId: "some-agent",
+				gwsDefaultDeny: false,
+			});
+			expect(result.success).toBe(true);
+			expect(mockExeca).toHaveBeenCalled();
+		});
+	});
+
 	describe("per-agent scope restriction (G4)", () => {
 		it("blocks agent when service is in denyServices", async () => {
 			const scopes: GwsAgentScopes = {
@@ -299,6 +343,53 @@ describe("executeGws", () => {
 			};
 			const result = await executeGws(makeParams({ service: "gmail" }), "test-id", {
 				scopes,
+			});
+			expect(result.success).toBe(true);
+			expect(mockExeca).toHaveBeenCalled();
+		});
+	});
+
+	describe("gwsDefaultDeny enforcement (G5)", () => {
+		it("denies agent without scope entry when gwsDefaultDeny=true", async () => {
+			const scopes: GwsAgentScopes = {
+				"other-agent": { allowedServices: ["gmail"] },
+			};
+			const result = await executeGws(makeParams({ service: "gmail" }), "test-id", {
+				agentId: "unconfigured-agent",
+				scopes,
+				gwsDefaultDeny: true,
+			});
+			expect(result.success).toBe(false);
+			expect(result.error).toContain("gwsDefaultDeny=true");
+			expect(result.error).toContain("unconfigured-agent");
+			expect(mockExeca).not.toHaveBeenCalled();
+		});
+
+		it("warns but allows when gwsDefaultDeny=false (backward compat)", async () => {
+			mockExeca.mockResolvedValue({ exitCode: 0, stdout: "{}", stderr: "" });
+			const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+			const scopes: GwsAgentScopes = {
+				"other-agent": { allowedServices: ["gmail"] },
+			};
+			const result = await executeGws(makeParams({ service: "gmail" }), "test-id", {
+				agentId: "unconfigured-agent",
+				scopes,
+				gwsDefaultDeny: false,
+			});
+			expect(result.success).toBe(true);
+			expect(mockExeca).toHaveBeenCalled();
+			warnSpy.mockRestore();
+		});
+
+		it("allows agent WITH scope entry when gwsDefaultDeny=true", async () => {
+			mockExeca.mockResolvedValue({ exitCode: 0, stdout: "{}", stderr: "" });
+			const scopes: GwsAgentScopes = {
+				"scoped-agent": { allowedServices: ["gmail"] },
+			};
+			const result = await executeGws(makeParams({ service: "gmail" }), "test-id", {
+				agentId: "scoped-agent",
+				scopes,
+				gwsDefaultDeny: true,
 			});
 			expect(result.success).toBe(true);
 			expect(mockExeca).toHaveBeenCalled();

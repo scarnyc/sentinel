@@ -34,6 +34,7 @@ export interface ExecuteGwsContext {
 	scopes?: GwsAgentScopes;
 	vault?: CredentialVault;
 	integrityConfig?: GwsIntegrityConfig;
+	gwsDefaultDeny?: boolean;
 }
 
 export async function executeGws(
@@ -42,6 +43,26 @@ export async function executeGws(
 	ctx?: ExecuteGwsContext,
 ): Promise<ToolResult> {
 	const start = Date.now();
+
+	// SENTINEL: G5 — gwsDefaultDeny blocks unidentified callers (must have agentId)
+	if (ctx?.gwsDefaultDeny && !ctx?.agentId) {
+		return {
+			manifestId,
+			success: false,
+			error: "GWS denied — agentId required when gwsDefaultDeny is enabled",
+			duration_ms: Date.now() - start,
+		};
+	}
+
+	// SENTINEL: G5 — gwsDefaultDeny blocks ALL agents when no scopes are configured
+	if (ctx?.gwsDefaultDeny && ctx?.agentId && !ctx?.scopes) {
+		return {
+			manifestId,
+			success: false,
+			error: `Agent "${ctx.agentId}" denied — no GWS agent scopes configured (gwsDefaultDeny=true)`,
+			duration_ms: Date.now() - start,
+		};
+	}
 
 	// SENTINEL: Per-agent scope restriction (G4)
 	if (ctx?.agentId && ctx?.scopes?.[ctx.agentId]) {
@@ -64,8 +85,16 @@ export async function executeGws(
 		}
 	}
 
-	// SENTINEL: L2 — Warn when agent has ID but no scope configuration
+	// SENTINEL: L2/G5 — Deny or warn when agent has ID but no scope configuration
 	if (ctx?.agentId && ctx?.scopes && !ctx.scopes[ctx.agentId]) {
+		if (ctx.gwsDefaultDeny) {
+			return {
+				manifestId,
+				success: false,
+				error: `Agent "${ctx.agentId}" denied — no GWS scope entry configured (gwsDefaultDeny=true)`,
+				duration_ms: Date.now() - start,
+			};
+		}
 		console.warn(
 			`[gws:scope] Agent "${ctx.agentId}" has no scope entry — running with unrestricted GWS access`,
 		);

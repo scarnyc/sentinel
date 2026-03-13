@@ -3,6 +3,7 @@ import { AuditLogger } from "@sentinel/audit";
 import { CredentialVault } from "@sentinel/crypto";
 import { getDefaultConfig, validateConfig } from "@sentinel/policy";
 import { ensureDockerAuth } from "./docker-auth.js";
+import { applyDockerDefaults } from "./docker-defaults.js";
 import { createApp } from "./server.js";
 import { createToolRegistry } from "./tools/index.js";
 
@@ -19,6 +20,18 @@ try {
 	process.exit(1);
 }
 validated = ensureDockerAuth(validated);
+
+// SENTINEL: G2, G4, G5 — Docker GWS security defaults
+const dockerResult = applyDockerDefaults(validated, process.env);
+if (dockerResult.fatal) {
+	console.error(dockerResult.fatal);
+	process.exit(1);
+}
+for (const warning of dockerResult.warnings) {
+	console.warn(warning);
+}
+validated = dockerResult.config;
+
 const config = Object.freeze(structuredClone(validated));
 
 const auditLogger = new AuditLogger(config.auditLogPath);
@@ -37,6 +50,13 @@ if (vaultPassword && config.vaultPath) {
 		console.warn(
 			`[sentinel] Vault open failed — falling back to env vars: ${err instanceof Error ? err.message : "Unknown"}`,
 		);
+		// SENTINEL: G7 — Vault failure in Docker is fatal (fail-closed)
+		if (process.env.SENTINEL_DOCKER === "true") {
+			console.error(
+				"[sentinel] FATAL: Vault open failed in Docker — cannot start without credential vault",
+			);
+			process.exit(1);
+		}
 	}
 }
 
@@ -45,6 +65,7 @@ const registry = createToolRegistry({
 	gwsScopes: config.gwsAgentScopes,
 	vault,
 	gwsIntegrity: config.gwsIntegrity,
+	gwsDefaultDeny: config.gwsDefaultDeny,
 });
 // SENTINEL: Generate HMAC secret for response signing (B4 pen test finding)
 const { randomBytes: generateHmacBytes } = await import("node:crypto");

@@ -7,7 +7,6 @@ Sentinel is a security-hardened agent runtime with process isolation between the
 **Next Steps**:
 1. Context budget enforcement: per-result 30% cap, global 75% cap
 2. Tool recursion depth limiting: max depth 5 for agent-to-agent calls
-3. Create setup guide for OpenClaw with Sentinel
 **Roadmap**: `docs/plans/path-a-v2-adopt-openfang-primitives.md`
 **Wave spec**: `docs/superpowers/specs/2026-03-10-phase-2-waves-design.md`
 
@@ -20,6 +19,7 @@ Sentinel is a security-hardened agent runtime with process isolation between the
 - [x] Wave 2.2c: Pen Test Fixes — 16 findings across 4 waves (845 tests)
 - [x] Wave 2.3a: OpenClaw + Sentinel Plugin — types, /classify, /filter-output, plugin package, delegate.code, setup CLI (48 tests)
 - [x] Wave 2.3b: OpenClaw + Sentinel E2E Integration — 8 integration tests (903 tests)
+- [x] Wave 2.3c: GWS Security Guardrails — Docker defaults, gwsDefaultDeny, fail-closed plugin, test refactoring (1106 tests)
 - [ ] Wave 2.4: LLM Infrastructure (Plano routing, prompt caching, Promptfoo)
 
 ## Quick Commands
@@ -59,7 +59,7 @@ pnpm install
 ```bash
 pnpm install
 pnpm typecheck   # Verify TypeScript
-pnpm test         # Run all tests (845+)
+pnpm test         # Run all tests (1100+)
 ```
 
 ### Running locally
@@ -264,6 +264,9 @@ Details in `docs/plans/path-a-v2-adopt-openfang-primitives.md` and MEMORY.md eva
 | `SENTINEL_POLICY_VERSION` | Container | Policy version string (read at startup) |
 | `SENTINEL_AUDIT_ENABLED` | Container | Enable/disable audit logging |
 | `CLAUDE_MEM_DATA_DIR` | Container | claude-mem SQLite path override |
+| `SENTINEL_GWS_SHA256` | Container | SHA-256 hex digest for GWS binary verification (required in Docker) |
+| `SENTINEL_GWS_AGENT_SCOPES` | Container | JSON-encoded per-agent GWS scope map |
+| `SENTINEL_GWS_ACCOUNT_EMAIL` | Container | Expected Google account email for identity validation |
 
 API keys stored in encrypted vault via `sentinel init`. Local dev uses `.dev.vars` (see `.dev.vars.example`). **Never** commit `.dev.vars` with real values.
 
@@ -314,7 +317,8 @@ Defined in `.claude/settings.json` — includes test, lint, and typecheck comman
 - **AuditLogger auto-key-gen** — constructor calls `loadOrGenerateSigningKey()`, so ALL entries are signed; tests must use `logger.getSigningPublicKey()` not random keys for verification
 - **Parallel wave contamination** — when multiple waves touch the same file, restore from main first (`git checkout <main-sha> -- <file>`) then apply only the current wave's fix
 - **Types `dist/` uses `tsc --build`** — tsup DTS fails with composite project refs; `pnpm build` in types only produces ESM bundle. For full dist (with per-file .js + .d.ts), run `tsc --build` from `packages/types/`. Delete `tsconfig.tsbuildinfo` for clean rebuild.
-- **Executor-client HTTP tests need sandbox disabled** — `node:http` createServer with `.listen()` triggers sandbox EPERM; use `dangerouslyDisableSandbox: true` for tests that start local HTTP servers
+- **Executor-client HTTP tests need sandbox disabled** — `node:http` createServer with `.listen()` triggers sandbox EPERM; prefer `vi.stubGlobal("fetch", mockFetch)` pattern (see `packages/agent/src/executor-client.test.ts`); only use `dangerouslyDisableSandbox: true` for tests that truly require real TLS handshakes
+- **`gwsDefaultDeny` in Docker** — `applyDockerDefaults()` sets `gwsDefaultDeny: true` automatically; agents without a GWS scope entry are **denied**, not warned. Non-Docker mode defaults to `false` (backward compat)
 
 
 ## Build Progress
@@ -334,6 +338,7 @@ Defined in `.claude/settings.json` — includes test, lint, and typecheck comman
 | Wave 2.2c: Pen Test Fixes | 847 | #17 | 16 pen test findings + 16 PR review fixes (3 critical, 8 important, 5 additional): fail-safe limits, HMAC wiring, TOCTOU inode, Ed25519 key separation, body size limits, Rust N-API scaffold |
 | Wave 2.3a: OpenClaw Plugin | 895 | — | `/classify` + `/filter-output` endpoints, `@sentinel/openclaw-plugin` package, `delegate.code` handler, delegation queue, `sentinel setup openclaw` CLI, heartbeat monitor, setup guide |
 | Wave 2.3b: E2E Integration Tests | 903 | — | Plugin ↔ executor pipeline, delegation lifecycle, shared audit sources, fail-closed health monitor, sanitizeOutput |
+| Wave 2.3c: GWS Security Guardrails | 1106 | — | Docker GWS defaults (G2), fail-closed plugin (G3), account email validation (G4), gwsDefaultDeny (G5), E2E injection test (G6), vault failure logging (G7), test mock refactoring (G8) |
 
 ### Backlog
 
