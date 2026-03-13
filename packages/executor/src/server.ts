@@ -8,6 +8,9 @@ import { createAuthMiddleware } from "./auth-middleware.js";
 import { createLlmProxyHandler } from "./llm-proxy.js";
 import { requestIdMiddleware } from "./request-id.js";
 import { createResponseSigner } from "./response-signer.js";
+import { type ClassifyGuards, handleClassify } from "./classify-endpoint.js";
+import type { DelegationQueue } from "./delegate-handler.js";
+import { handleFilterOutput } from "./filter-endpoint.js";
 import {
 	type ConfirmFn,
 	handleExecute,
@@ -45,6 +48,7 @@ export function createApp(
 	registry: ToolRegistry,
 	vault?: CredentialVault,
 	hmacSecret?: Buffer,
+	delegationQueue?: DelegationQueue,
 ): Hono {
 	const app = new Hono();
 	const pendingConfirmations = new Map<string, PendingConfirmation>();
@@ -115,6 +119,8 @@ export function createApp(
 		};
 	};
 	app.use("/execute", createBodyLimitMiddleware(10 * 1024 * 1024, "10MB"));
+	app.use("/classify", createBodyLimitMiddleware(10 * 1024 * 1024, "10MB"));
+	app.use("/filter-output", createBodyLimitMiddleware(10 * 1024 * 1024, "10MB"));
 	// SENTINEL: I7 — 25MB for LLM proxy to accommodate large context windows (200K+ tokens)
 	app.use("/proxy/llm/*", createBodyLimitMiddleware(25 * 1024 * 1024, "25MB"));
 
@@ -167,6 +173,50 @@ export function createApp(
 		}));
 		return c.json(pending);
 	});
+
+	// SENTINEL: Wave 2.3 — classify-only endpoint for OpenClaw plugin (no execution)
+	app.post("/classify", async (c) => {
+		try {
+			return await handleClassify(c, config, auditLogger, guards as ClassifyGuards);
+		} catch (error) {
+			console.error(
+				`[classify] Unhandled error: ${error instanceof Error ? error.message : "Unknown"}`,
+			);
+			return c.json({ error: "Internal classification error" }, 500);
+		}
+	});
+
+	// SENTINEL: Wave 2.3 — output filtering endpoint for OpenClaw plugin
+	app.post("/filter-output", async (c) => {
+		try {
+			return await handleFilterOutput(c);
+		} catch (error) {
+			console.error(
+				`[filter-output] Unhandled error: ${error instanceof Error ? error.message : "Unknown"}`,
+			);
+			return c.json({ error: "Internal filter error" }, 500);
+		}
+	});
+
+	// SENTINEL: Wave 2.3 — delegation endpoints (only active when queue provided)
+	if (delegationQueue) {
+		app.get("/pending-delegations", (c) => {
+			const pending = delegationQueue.getPending();
+			return c.json(pending);
+		});
+
+		app.post("/delegation-status/:id", async (c) => {
+			const { id } = c.req.param();
+			const raw = await c.req.json();
+			const status = (raw as { status?: string }).status;
+			const prUrl = (raw as { prUrl?: string }).prUrl;
+			if (!status) {
+				return c.json({ error: "Missing status field" }, 400);
+			}
+			delegationQueue.updateStatus(id, status, prUrl);
+			return c.json({ ok: true });
+		});
+	}
 
 	// SENTINEL: Vault-based key injection when available, env var fallback otherwise
 	app.all("/proxy/llm/*", createLlmProxyHandler(vault, auditLogger));

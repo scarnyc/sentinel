@@ -5,8 +5,8 @@ Sentinel is a security-hardened agent runtime with process isolation between the
 ## Current Phase: Phase 2 — Integrations + Real Agents
 
 **Next Steps**:
-1. Create set-up guide for openclaw with sentinel 
-2. Security scan gooogle workspace cli
+1. E2E integration testing for OpenClaw + Sentinel
+2. Security scan google workspace cli
 **Roadmap**: `docs/plans/path-a-v2-adopt-openfang-primitives.md`
 **Wave spec**: `docs/superpowers/specs/2026-03-10-phase-2-waves-design.md`
 
@@ -17,7 +17,8 @@ Sentinel is a security-hardened agent runtime with process isolation between the
 - [x] Wave 2.2: Google Workspace CLI + Email Defense (583 tests)
 - [x] Wave 2.2b: Credential Zeroization — useCredential helper, V8 string lifetime minimization (652 tests)
 - [x] Wave 2.2c: Pen Test Fixes — 16 findings across 4 waves (845 tests)
-- [ ] Wave 2.3: OpenClaw + Sentinel Plugin
+- [x] Wave 2.3a: OpenClaw + Sentinel Plugin — types, /classify, /filter-output, plugin package, delegate.code, setup CLI (48 tests)
+- [ ] Wave 2.3b: OpenClaw + Sentinel E2E Integration
 - [ ] Wave 2.4: LLM Infrastructure (Plano routing, prompt caching, Promptfoo)
 
 ## Quick Commands
@@ -83,6 +84,7 @@ sentinel chat     # Start interactive agent session with TUI confirmation
 | `.claude/skills/security-audit/SKILL.md` | `/security-audit` skill — validates 12 security invariants |
 | `.claude/skills/upstream-sync/SKILL.md` | `/upstream-sync` skill — rebase on moltworker (user-only) |
 | `.rampart/policy.yaml` | Host-level Rampart firewall policy (tfstate, data protection, security code gate) |
+| `docs/guides/openclaw-sentinel-setup.md` | OpenClaw + Sentinel deployment guide |
 
 
 ## Architecture
@@ -118,7 +120,7 @@ sentinel chat     # Start interactive agent session with TUI confirmation
                           └─────────────────────┘
 ```
 
-Agent sends **Action Manifests** (typed JSON) to executor over HTTP :3141. Executor validates, classifies, moderates, optionally confirms with user, executes, audits, returns sanitized results. Agent container has `internal: true` network — no direct internet access. LLM calls are proxied through executor's `/proxy/llm/*` endpoint, which injects API keys and restricts to allowlisted hosts. Confirmation TUI runs on host (trust anchor), never inside Docker.
+Agent sends **Action Manifests** (typed JSON) to executor over HTTP :3141. Executor validates, classifies, moderates, optionally confirms with user, executes, audits, returns sanitized results. OpenClaw agents use `/classify` (classification-only) and `/filter-output` (credential/PII scrubbing) endpoints via the `@sentinel/openclaw-plugin` package. Agent container has `internal: true` network — no direct internet access. LLM calls are proxied through executor's `/proxy/llm/*` endpoint, which injects API keys and restricts to allowlisted hosts. Confirmation TUI runs on host (trust anchor), never inside Docker.
 
 ### OpenClaw Parallel Agent Model
 
@@ -142,7 +144,8 @@ secure-openclaw/
 │   ├── executor/                # Trusted process (Hono :3141)
 │   ├── agent/                   # Untrusted process (LLM loop)
 │   ├── cli/                     # Host orchestrator + TUI
-│   └── memory/                  # Hybrid retrieval memory store (SQLite + FTS5 + sqlite-vec)
+│   ├── memory/                  # Hybrid retrieval memory store (SQLite + FTS5 + sqlite-vec)
+│   └── openclaw-plugin/         # OpenClaw → Sentinel bridge (classify, filter, delegate)
 ├── sentinel/                    # Sentinel-specific extensions
 │   ├── manifests/               # Action manifest Zod schemas
 │   ├── mem-hardening/           # claude-mem validation & caps
@@ -323,6 +326,7 @@ Defined in `.claude/settings.json` — includes test, lint, and typecheck comman
 | GWS Credential Audit | 594 | — | Closed 5 audit gaps: LLM proxy body filtering, PEM key detection, exfiltration patterns, outbound email credential gate, OS Keyring docs |
 | Wave 2.2b: Credential Zeroization | 652 | #16 | `useCredential()` helper, V8 string lifetime minimization, LLM proxy refactor, GWS vault migration, API deprecation |
 | Wave 2.2c: Pen Test Fixes | 847 | #17 | 16 pen test findings + 16 PR review fixes (3 critical, 8 important, 5 additional): fail-safe limits, HMAC wiring, TOCTOU inode, Ed25519 key separation, body size limits, Rust N-API scaffold |
+| Wave 2.3a: OpenClaw Plugin | 895 | — | `/classify` + `/filter-output` endpoints, `@sentinel/openclaw-plugin` package, `delegate.code` handler, delegation queue, `sentinel setup openclaw` CLI, heartbeat monitor, setup guide |
 
 ### Backlog
 

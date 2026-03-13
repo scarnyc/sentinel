@@ -24,5 +24,6 @@ export const AuditEntrySchema = z.object({
 	sessionId: z.string().min(1),
 	agentId: z.string().min(1),
 	signature: z.string().optional(),
+	source: z.enum(["sentinel", "openclaw", "claude-code"]).optional(),
 });
 export type AuditEntry = z.infer<typeof AuditEntrySchema>;
