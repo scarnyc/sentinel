@@ -14,7 +14,7 @@ Create a standalone document describing the full Sentinel request pipeline at th
 ### Section 1: Header & Snapshot
 - Title: "Sentinel Pipeline State Machine — Phase 2 (Wave 2.2c)"
 - Snapshot block: 847 tests, 9 packages, key capabilities added since Phase 1.5
-- Links to master plan and previous pipeline doc
+- Links to master plan and previous pipeline doc (`docs/pipeline-state-machine-phase-1.5.md`)
 
 ### Section 2: Main State Machine Diagram (ASCII Art)
 Full ASCII box-art diagram showing the 20-step pipeline:
@@ -51,7 +51,7 @@ Full ASCII box-art diagram showing the 20-step pipeline:
 9. Pre-execute Content Moderation (prompt injection + exfiltration scanning)
 10. Audit: Pending entry (Merkle chain + Ed25519 signature)
 11. Tool Execute (bash/gws/read/write/MCP handlers)
-12. Credential Filter (46 patterns, 3-pass encoding-aware, depth-limited)
+12. Credential Filter (patterns from `packages/types/src/credential-patterns.ts`, 3-pass encoding-aware, depth-limited)
 13. PII Scrubber (SSN, phone, email, salary → [PII_REDACTED])
 14. Post-execute Content Moderation
 15. Audit: Final entry (success/failure + duration, Merkle + Ed25519)
@@ -69,7 +69,7 @@ ASCII box diagram + comparison table, same structure as Phase 1.5.
 - Confirmation: 5-minute timeout (resource exhaustion defense)
 
 **Layer 3: Sentinel Output Filters (Data Boundary)** — expanded:
-- Credential filter: 46 patterns (up from ~30), 3-pass encoding (plaintext → base64 → URL decode), recursive depth limit (4 levels)
+- Credential filter: 21 credential + 9 PII patterns (30 total) (up from ~30), 3-pass encoding (plaintext → base64 → URL decode), recursive depth limit (4 levels)
 - SSE credential filter for streaming LLM proxy responses
 - Email injection scanner + pre-send credential gating
 - PEM key detection, JWT tokens, Stripe keys added
@@ -90,12 +90,12 @@ One subsection per phase with what/where/why narrative:
 | 6 | Decision Routing | Updated — 5-min timeout, write-irreversible TUI warning |
 | 7 | Pre-Execute Content Moderation | Unchanged (promoted to explicit phase) |
 | 8 | Tool Execution | Updated — GWS handler, email scanner, per-agent scoping |
-| 9 | Output Sanitization | Updated — 46 patterns, 3-pass encoding, depth limit |
+| 9 | Output Sanitization | Updated — 21 credential + 9 PII patterns (30 total), 3-pass encoding, depth limit |
 | 10 | Audit Logging | Updated — dual entries (pending+final), Ed25519 mandatory |
 | 11 | Return to Agent | Unchanged |
 
 ### Section 5: Memory Store Subsystem
-Carried forward verbatim from Phase 1.5. No changes in Waves 2.1–2.2c.
+Carried forward from Phase 1.5 structure. No functional changes in Waves 2.1–2.2c. Update snapshot references (test count, PR number) to reflect Phase 2 context — do not leave stale Phase 1.5 numbers.
 - Write path (validate → scrub → dedup → quota → insert → embed)
 - Read path (FTS5 + vector KNN → reciprocal rank fusion)
 - Consolidation path (session summary → daily rollup → prune → context builder)
@@ -104,15 +104,57 @@ Carried forward verbatim from Phase 1.5. No changes in Waves 2.1–2.2c.
 
 ### Section 6: Confirmation Subsystem
 Updated ASCII diagram showing:
-- 5-minute timeout with auto-deny (was infinite)
+- 5-minute timeout with auto-deny — replaces Phase 1.5 statement "there is no timeout (waits indefinitely)" (line 435 of template)
 - write-irreversible "CANNOT BE UNDONE" warning in TUI display
 - Same host-side trust anchor, Promise blocking, concurrent poller
 
 ### Section 7: Executor Endpoints
-Same 7-endpoint table from Phase 1.5. Note that all authenticated endpoints now return `X-Sentinel-Signature` (HMAC) and `X-Request-ID` headers.
+Same 7-endpoint table from Phase 1.5. Add columns or notes for:
+- All authenticated endpoints now return `X-Sentinel-Signature` (HMAC) and `X-Request-ID` headers
+- `/execute` accepts max 10MB body; `/proxy/llm/*` accepts max 25MB body (enforced by middleware)
 
 ### Section 8: Key Files Reference (New)
-25-row table mapping pipeline steps to source files and key functions. Developer onboarding lookup.
+Table mapping pipeline steps to source files and key functions. Developer onboarding lookup. Representative rows:
+
+| Pipeline Step | File | Key Function |
+|---------------|------|-------------|
+| Startup/entrypoint | `packages/executor/src/entrypoint.ts` | `main()` |
+| HTTP server + middleware | `packages/executor/src/server.ts` | `createApp()` |
+| Request ID | `packages/executor/src/request-id.ts` | `requestIdMiddleware()` |
+| HMAC response signing | `packages/executor/src/response-signer.ts` | `createResponseSigner()` |
+| Auth | `packages/executor/src/auth-middleware.ts` | `createAuthMiddleware()` |
+| Core pipeline | `packages/executor/src/router.ts` | `handleExecute()` |
+| Policy classifier | `packages/policy/src/classifier.ts` | `classify()` |
+| Credential patterns | `packages/types/src/credential-patterns.ts` | `redactAll()` |
+| Audit logger | `packages/audit/src/logger.ts` | `AuditLogger.log()` |
+| Agent loop | `packages/agent/src/loop.ts` | `agentLoop()` |
+| ... | (full table covers all 20+ pipeline steps) | |
+
+### Section 9: Changes from Phase 1.5
+Dedicated delta section (matches Phase 1.5's "Changes from Phase 1" pattern):
+
+| Area | Phase 1.5 (PR #9) | Phase 2 (Wave 2.2c) |
+|------|-------------------|---------------------|
+| Tests | 542 | 847 |
+| Packages | 8 | 9 (+crypto-native Rust N-API) |
+| HTTP middleware | None | Request ID, body size limits, HMAC signing |
+| Action categories | read/write/dangerous | +write-irreversible |
+| Confirmation | Infinite wait | 5-min timeout, auto-deny |
+| Credential patterns | ~30 | Count from source file (3-pass encoding, depth-limited) |
+| GWS integration | None | Tool handler, per-agent scoping, email scanner |
+| Credential access | decrypt()/retrieve() | useCredential() callback pattern |
+| Audit entries | 1 per execution | 2 per execution (pending + final) |
+| Ed25519 signing | Optional | Mandatory (auto-keygen in constructor) |
+| Classifier defense | None | ReDoS protection (200 char cap, nested quantifier detection) |
+
+**Numbering note**: The diagram uses *step numbers* (1–15) for the linear processing sequence. The narrative uses *phase numbers* (0–11) which group related steps thematically. The mapping is:
+- Phases 0–3: Before trust boundary (no step numbers — agent-side)
+- Phase 4: Steps 1–4 (HTTP middleware)
+- Phase 5: Steps 5–8 (guard pipeline)
+- Phase 6: Decision routing (branching, not a single step)
+- Phases 7–9: Steps 9–14 (moderation + execution + output filters)
+- Phase 10: Step 15 (final audit)
+- Phase 11: Return (no step number)
 
 ## Implementation Notes
 
