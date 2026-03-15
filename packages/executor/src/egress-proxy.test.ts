@@ -12,7 +12,7 @@ vi.mock("node:dns/promises", () => ({
 }));
 
 const DEFAULT_BINDINGS: EgressBinding[] = [
-	{ serviceId: "telegram", allowedDomains: ["api.telegram.org"] },
+	{ serviceId: "TELEGRAM", allowedDomains: ["api.telegram.org"] },
 ];
 
 function createMockVault(credentialData?: Record<string, string>) {
@@ -94,7 +94,7 @@ describe("egress proxy", () => {
 		(dns.default.resolve4 as ReturnType<typeof vi.fn>).mockResolvedValue(["1.2.3.4"]);
 	});
 
-	it("substitutes credential placeholders and forwards request", async () => {
+	it("substitutes credential placeholders in URL, headers, and body", async () => {
 		const mockResponse = new Response(JSON.stringify({ ok: true }), {
 			status: 200,
 			headers: { "content-type": "application/json" },
@@ -103,18 +103,19 @@ describe("egress proxy", () => {
 
 		const { app } = createTestApp();
 		const res = await postEgress(app, {
-			url: "https://api.telegram.org/botSENTINEL_PLACEHOLDER_TELEGRAM_BOT_TOKEN/sendMessage",
+			url: "https://api.telegram.org/botSENTINEL_PLACEHOLDER_TELEGRAM__BOT_TOKEN/sendMessage",
 			method: "POST",
 			body: "chat_id=1&text=hello",
 		});
 
 		expect(res.status).toBe(200);
 
-		// Verify fetch was called with the substituted URL
+		// Verify fetch was called with the substituted URL (token replaced in URL path)
 		const mockFetch = globalThis.fetch as ReturnType<typeof vi.fn>;
 		expect(mockFetch).toHaveBeenCalled();
-		// The URL passed to fetch should still have the placeholder (substitution is in headers/body, URL is as-is)
-		// Actually URL is passed as-is to fetch; credential substitution only applies to headers and body
+		const calledUrl = mockFetch.mock.calls[0][0] as string;
+		expect(calledUrl).toBe("https://api.telegram.org/bottest-token-123/sendMessage");
+		expect(calledUrl).not.toContain("SENTINEL_PLACEHOLDER");
 
 		vi.stubGlobal("fetch", originalFetch);
 	});
@@ -128,12 +129,13 @@ describe("egress proxy", () => {
 			url: "https://api.telegram.org/sendMessage",
 			method: "POST",
 			headers: {
-				Authorization: "Bearer SENTINEL_PLACEHOLDER_GITHUB_TOKEN",
+				Authorization: "Bearer SENTINEL_PLACEHOLDER_GITHUB__TOKEN",
 			},
 		});
 		expect(res.status).toBe(403);
 		const json = (await res.json()) as Record<string, unknown>;
-		expect(json.error).toContain("Credential substitution failed");
+		// Error message should be generic (no vault structure leak)
+		expect(json.error).toBe("Credential substitution failed");
 
 		vi.stubGlobal("fetch", originalFetch);
 	});

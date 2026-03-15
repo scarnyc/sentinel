@@ -8,6 +8,7 @@ export { loadConfigFromEnv, type PluginConfig, PluginConfigSchema } from "./conf
 export { ExecutorClient } from "./executor-client.js";
 export { HealthMonitor } from "./health-monitor.js";
 export { buildManifest, type SessionContext } from "./manifest-bridge.js";
+export { type OpenClawPluginApi, registerSentinelPlugin } from "./register.js";
 
 export interface BeforeToolCallResult {
 	block: boolean;
@@ -79,17 +80,20 @@ export function createSentinelPlugin(config?: Partial<PluginConfig>): SentinelPl
 				}
 
 				if (response.decision === "confirm") {
-					// Route through executor's confirmation flow
-					const result = await client.execute({
-						...manifest,
-						source: "openclaw",
-					});
-					if (!result.success) {
+					// Route through executor's TUI confirmation flow (classify + confirm, no execution)
+					const confirmResult = await client.confirmOnly(
+						manifest.tool,
+						manifest.parameters,
+						manifest.agentId,
+						manifest.sessionId,
+					);
+					if (confirmResult.decision === "denied" || confirmResult.decision === "block") {
 						return {
 							block: true,
-							blockReason: (result.error as string) ?? "Execution denied",
+							blockReason: confirmResult.reason ?? "Denied by user",
 						};
 					}
+					// "approved" or "auto_approve" — allow through
 				}
 
 				// auto_approve — allow through

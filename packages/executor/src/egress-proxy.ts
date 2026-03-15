@@ -168,6 +168,8 @@ export function createEgressProxyHandler(
 				"block",
 				"blocked_by_policy",
 				proxyStart,
+				egressReq.agentId,
+				egressReq.sessionId,
 			);
 			return c.json({ error: `Blocked: ${targetHost} is not a bound egress domain` }, 403);
 		}
@@ -186,6 +188,8 @@ export function createEgressProxyHandler(
 					"block",
 					"blocked_by_policy",
 					proxyStart,
+					egressReq.agentId,
+					egressReq.sessionId,
 				);
 				return c.json({ error: "Blocked: SSRF protection" }, 403);
 			}
@@ -206,14 +210,20 @@ export function createEgressProxyHandler(
 				"block",
 				"failure",
 				proxyStart,
+				egressReq.agentId,
+				egressReq.sessionId,
 			);
 			return c.json({ error: "Egress proxy requires credential vault" }, 500);
 		}
 
+		let forwardUrl: string;
 		let forwardHeaders: Record<string, string>;
 		let forwardBody: string | undefined;
 
 		try {
+			// Substitute in URL (SSRF check already ran on raw URL)
+			forwardUrl = await substitutePlaceholders(egressReq.url, vault, boundServiceId);
+
 			// Substitute in headers
 			forwardHeaders = {};
 			for (const [key, value] of Object.entries(egressReq.headers)) {
@@ -229,6 +239,7 @@ export function createEgressProxyHandler(
 			}
 		} catch (error) {
 			if (error instanceof EgressSecurityError) {
+				console.error(`[egress-proxy][${reqId}] Credential substitution failed: ${error.message}`);
 				auditLog(
 					auditLogger,
 					reqId,
@@ -238,8 +249,10 @@ export function createEgressProxyHandler(
 					"block",
 					"blocked_by_policy",
 					proxyStart,
+					egressReq.agentId,
+					egressReq.sessionId,
 				);
-				return c.json({ error: `Credential substitution failed: ${error.message}` }, 403);
+				return c.json({ error: "Credential substitution failed" }, 403);
 			}
 			// Don't leak vault errors
 			console.error(`[egress-proxy][${reqId}] Credential substitution failed`);
@@ -252,6 +265,8 @@ export function createEgressProxyHandler(
 				"block",
 				"failure",
 				proxyStart,
+				egressReq.agentId,
+				egressReq.sessionId,
 			);
 			return c.json({ error: "Egress proxy credential error" }, 500);
 		}
@@ -266,7 +281,7 @@ export function createEgressProxyHandler(
 		}, UPSTREAM_TIMEOUT_MS);
 
 		try {
-			const upstreamResponse = await fetch(egressReq.url, {
+			const upstreamResponse = await fetch(forwardUrl, {
 				method: egressReq.method,
 				headers: forwardHeaders,
 				body: forwardBody,
@@ -296,6 +311,8 @@ export function createEgressProxyHandler(
 								"block",
 								"blocked_by_policy",
 								proxyStart,
+								egressReq.agentId,
+								egressReq.sessionId,
 							);
 							return c.json({ error: `Response body exceeds ${maxResponseBytes} byte limit` }, 502);
 						}
@@ -341,6 +358,8 @@ export function createEgressProxyHandler(
 				"auto_approve",
 				upstreamResponse.status < 400 ? "success" : "failure",
 				proxyStart,
+				egressReq.agentId,
+				egressReq.sessionId,
 			);
 
 			return new Response(filteredBody, {
@@ -361,6 +380,8 @@ export function createEgressProxyHandler(
 				"auto_approve",
 				"failure",
 				proxyStart,
+				egressReq.agentId,
+				egressReq.sessionId,
 			);
 			return c.json({ error: "Egress proxy upstream error" }, 502);
 		}
@@ -388,14 +409,16 @@ function auditLog(
 	decision: AuditDecision,
 	result: AuditResult,
 	startTime: number,
+	agentId = "unknown",
+	sessionId = "unknown",
 ): void {
 	try {
 		logger.log({
 			id: crypto.randomUUID(),
 			timestamp: new Date().toISOString(),
 			manifestId: crypto.randomUUID(),
-			sessionId: "system",
-			agentId: "agent",
+			sessionId,
+			agentId,
 			tool: "egress_proxy",
 			category: "write",
 			decision,

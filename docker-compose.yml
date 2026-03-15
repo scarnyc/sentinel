@@ -12,13 +12,15 @@ services:
       - ./data:/app/data:rw
     environment:
       - SENTINEL_DOCKER=true
-      - SENTINEL_AUTH_TOKEN=560a70d2206c933179593841b2f1a0087501a5ac5e189425ab241245d48c2e97
+      - SENTINEL_AUTH_TOKEN=${SENTINEL_AUTH_TOKEN:-}
       # Vault password — required for LLM proxy to inject API keys from encrypted vault
       # Passed at runtime via `sentinel start` (prompts for password)
       - SENTINEL_VAULT_PASSWORD=${SENTINEL_VAULT_PASSWORD:-}
       # GWS binary SHA-256 — required in Docker mode for integrity verification
       # Replace with real hash when GWS CLI is installed: sha256sum $(which gws)
       - SENTINEL_GWS_SHA256=0000000000000000000000000000000000000000000000000000000000000000
+      # Egress proxy domain-scoped credential bindings (JSON array)
+      - SENTINEL_EGRESS_BINDINGS=${SENTINEL_EGRESS_BINDINGS:-[]}
     # SENTINEL: L6 — Container resource limits
     mem_limit: 512m
     cpus: "1.0"
@@ -89,7 +91,7 @@ services:
       - openclaw-logs:/home/node/.openclaw/logs:rw
     environment:
       - SENTINEL_EXECUTOR_URL=http://executor:3141
-      - SENTINEL_AUTH_TOKEN=560a70d2206c933179593841b2f1a0087501a5ac5e189425ab241245d48c2e97
+      - SENTINEL_AUTH_TOKEN=${SENTINEL_AUTH_TOKEN:-}
       - SENTINEL_FAIL_MODE=closed
       - SENTINEL_DOCKER=true
       - NODE_ENV=production

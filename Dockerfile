@@ -60,4 +60,4 @@ RUN mkdir -p /app/data && chown node:node /app/data
 USER node
 EXPOSE 8080
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["openclaw", "gateway", "--bind", "loopback", "--port", "8080"]
+CMD ["openclaw", "gateway", "--bind", "0.0.0.0", "--port", "8080"]

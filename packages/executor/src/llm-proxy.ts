@@ -2,7 +2,6 @@ import type { AuditLogger } from "@sentinel/audit";
 import { type CredentialVault, useCredential } from "@sentinel/crypto";
 import { redactAllCredentialsWithEncoding } from "@sentinel/types";
 import type { Context } from "hono";
-import { createIpPinnedFetch } from "./ip-pinned-fetch.js";
 import { createSseCredentialFilter } from "./sse-credential-filter.js";
 import { checkSsrf, SsrfError } from "./ssrf-guard.js";
 
@@ -161,12 +160,10 @@ export function createLlmProxyHandler(
 		}
 
 		// SENTINEL: SSRF guard — verify target URL doesn't resolve to private IPs (Phase 1)
-		// DNS rebinding defense: SSRF allowlist + IP-pinned fetch via undici Agent when resolved IPs available
-		let ssrfResolvedIps: string[] | undefined;
+		// DNS rebinding defense: SSRF allowlist rejects private/internal IPs
 		try {
 			debug(reqId, "SSRF check starting");
-			const ssrfResult = await checkSsrf(targetUrl);
-			ssrfResolvedIps = ssrfResult?.resolvedIps;
+			await checkSsrf(targetUrl);
 			debug(reqId, `SSRF check passed (${Date.now() - proxyStart}ms)`);
 		} catch (error) {
 			if (error instanceof SsrfError) {
@@ -221,7 +218,24 @@ export function createLlmProxyHandler(
 					});
 				} catch (error) {
 					if (error instanceof Error && error.message.startsWith("No credential found")) {
-						// Key not in vault — fall through to env var path
+						// Try legacy key format (llm/<host>) for backward compatibility
+						const legacyKey = `llm/${targetHost}`;
+						try {
+							await useCredential(vault, legacyKey, (cred) => {
+								if (targetHost === "api.anthropic.com" && cred.key.startsWith("sk-ant-oat")) {
+									forwardHeaders.set("Authorization", `Bearer ${cred.key}`);
+								} else {
+									const value = authConfig.prefix ? `${authConfig.prefix}${cred.key}` : cred.key;
+									forwardHeaders.set(authConfig.headerName, value);
+								}
+								credentialSet = true;
+							});
+							console.warn(
+								`[llm-proxy] DEPRECATED: Vault key "${legacyKey}" found — migrate to "${authConfig.vaultServiceId}"`,
+							);
+						} catch {
+							// Neither format found — will fall through to env var
+						}
 					} else {
 						// SENTINEL: L5 — Never log error.message (may contain credential info)
 						console.error("[llm-proxy] Vault credential retrieval failed");

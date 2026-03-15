@@ -3,11 +3,14 @@ import { z } from "zod";
 // ---------------------------------------------------------------------------
 // Placeholder pattern — agent embeds these in requests; egress proxy replaces
 // with real credential values from vault via useCredential().
-// Format: SENTINEL_PLACEHOLDER_{SERVICE_ID}_{FIELD_NAME}
+// Format: SENTINEL_PLACEHOLDER_{SERVICE_ID}__{FIELD_NAME}
+// Double-underscore (__) separates serviceId from field. ServiceId is
+// alphanumeric only (no underscores); field may contain underscores.
+// Example: SENTINEL_PLACEHOLDER_TELEGRAM__BOT_TOKEN
 // ---------------------------------------------------------------------------
 
-/** Matches SENTINEL_PLACEHOLDER_<serviceId>_<field> tokens in request text. */
-export const PLACEHOLDER_PATTERN = /SENTINEL_PLACEHOLDER_([A-Za-z0-9_-]+)_([A-Za-z0-9_-]+)/g;
+/** Matches SENTINEL_PLACEHOLDER_<serviceId>__<field> tokens in request text. */
+export const PLACEHOLDER_PATTERN = /SENTINEL_PLACEHOLDER_([A-Za-z0-9]+)__([A-Za-z0-9_]+)/g;
 
 /**
  * Reserved metadata key within vault credential entries.
@@ -44,7 +47,7 @@ export type EgressConfig = z.infer<typeof EgressConfigSchema>;
 // ---------------------------------------------------------------------------
 
 export const EgressRequestSchema = z.object({
-	/** Full destination URL (https only). */
+	/** Full destination URL (https only; may contain SENTINEL_PLACEHOLDER_* tokens). */
 	url: z.string().url(),
 	/** HTTP method. */
 	method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]).default("GET"),
@@ -52,5 +55,9 @@ export const EgressRequestSchema = z.object({
 	headers: z.record(z.string()).default({}),
 	/** Request body (may contain SENTINEL_PLACEHOLDER_* tokens). */
 	body: z.string().optional(),
+	/** Agent ID for audit attribution. */
+	agentId: z.string().min(1).default("unknown"),
+	/** Session ID for audit attribution. */
+	sessionId: z.string().min(1).default("unknown"),
 });
 export type EgressRequest = z.infer<typeof EgressRequestSchema>;
