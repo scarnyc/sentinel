@@ -15,7 +15,7 @@ vi.mock("@sentinel/crypto", () => ({
 			_serviceId: string,
 			_keys: readonly string[],
 			fn: (cred: Record<string, string>) => Promise<unknown>,
-		) => fn({ BOT_TOKEN: "test-bot-token" }),
+		) => fn({ key: "test-bot-token" }),
 	),
 }));
 
@@ -23,7 +23,7 @@ function createMockVault(): CredentialVault {
 	return {
 		retrieveBuffer: vi
 			.fn()
-			.mockReturnValue(Buffer.from(JSON.stringify({ BOT_TOKEN: "test-bot-token" }))),
+			.mockReturnValue(Buffer.from(JSON.stringify({ key: "test-bot-token" }))),
 	} as unknown as CredentialVault;
 }
 
