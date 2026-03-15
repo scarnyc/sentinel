@@ -20,9 +20,9 @@ const UPSTREAM_TIMEOUT_MS = 60_000;
 // ---------------------------------------------------------------------------
 
 export interface TelegramInterceptor {
-	chatId: number;
+	isAuthorizedChat: (chatId: number) => boolean;
 	resolveConfirmation: (manifestId: string, approved: boolean) => boolean;
-	telegramApi: (method: string, params: Record<string, unknown>) => Promise<unknown>;
+	acknowledgeCallback: (callbackQueryId: string, text: string, showAlert: boolean) => Promise<void>;
 }
 
 interface TelegramUpdate {
@@ -45,54 +45,78 @@ function interceptTelegramUpdates(
 	interceptor: TelegramInterceptor,
 ): TelegramUpdate[] {
 	return updates.map((update) => {
-		if (!update.callback_query?.data?.startsWith("confirm:")) {
-			return update; // pass through non-confirm updates unchanged
-		}
+		try {
+			if (!update.callback_query?.data?.startsWith("confirm:")) {
+				return update; // pass through non-confirm updates unchanged
+			}
 
-		const { callback_query } = update;
-		const callbackData = callback_query.data as string; // narrowed by startsWith guard above
+			const { callback_query } = update;
+			const callbackData = callback_query.data as string; // narrowed by startsWith guard above
 
-		// Security: verify callback came from authorized chat
-		if (callback_query.message?.chat?.id !== interceptor.chatId) {
-			console.warn(
-				`[egress-telegram] SECURITY: callback from unauthorized chat ${callback_query.message?.chat?.id}`,
+			// Security: verify callback came from authorized chat
+			const callbackChatId = callback_query.message?.chat?.id;
+			if (callbackChatId === undefined || !interceptor.isAuthorizedChat(callbackChatId)) {
+				console.warn(
+					`[egress-telegram] SECURITY: callback from unauthorized chat ${callbackChatId}`,
+				);
+				// Answer to prevent Telegram re-delivery (pen test Finding 7)
+				interceptor.acknowledgeCallback(callback_query.id, "Unauthorized", true).catch((err) => {
+					console.error(
+						`[egress-telegram] answerCallbackQuery (unauthorized) failed: ${err instanceof Error ? err.message : "Unknown"}`,
+					);
+				});
+				return { update_id: update.update_id }; // stub (preserves offset, no resolution)
+			}
+
+			// Parse callback data: "confirm:manifestId:action"
+			const parts = callbackData.split(":");
+			if (parts.length !== 3) {
+				console.warn(`[egress-telegram] Malformed callback data: ${callbackData}`);
+				interceptor
+					.acknowledgeCallback(callback_query.id, "Invalid callback data", true)
+					.catch((err) => {
+						console.error(
+							`[egress-telegram] answerCallbackQuery (malformed) failed: ${err instanceof Error ? err.message : "Unknown"}`,
+						);
+					});
+				return { update_id: update.update_id }; // stub
+			}
+
+			const manifestId = parts[1];
+			const action = parts[2];
+			if (action !== "approve" && action !== "reject") {
+				console.warn(`[egress-telegram] Unknown action in callback data: ${callbackData}`);
+				interceptor.acknowledgeCallback(callback_query.id, "Unknown action", true).catch((err) => {
+					console.error(
+						`[egress-telegram] answerCallbackQuery (unknown action) failed: ${err instanceof Error ? err.message : "Unknown"}`,
+					);
+				});
+				return { update_id: update.update_id }; // stub
+			}
+
+			const approved = action === "approve";
+			const resolved = interceptor.resolveConfirmation(manifestId, approved);
+
+			// Answer the callback (fire-and-forget)
+			interceptor
+				.acknowledgeCallback(
+					callback_query.id,
+					resolved ? (approved ? "Approved" : "Rejected") : "Action not found (may have timed out)",
+					!resolved,
+				)
+				.catch((err) => {
+					console.error(
+						`[egress-telegram] answerCallbackQuery failed for ${manifestId}: ${err instanceof Error ? err.message : "Unknown"}`,
+					);
+				});
+
+			return { update_id: update.update_id }; // stub — preserves offset
+		} catch (err) {
+			console.error(
+				`[egress-telegram] Error processing update ${update.update_id}: ${err instanceof Error ? err.message : "Unknown"}`,
 			);
-			return { update_id: update.update_id }; // stub (preserves offset, no resolution)
+			return update; // pass through unmodified on error
 		}
-
-		// Parse callback data: "confirm:manifestId:action"
-		const parts = callbackData.split(":");
-		if (parts.length !== 3) {
-			console.warn(`[egress-telegram] Malformed callback data: ${callbackData}`);
-			return { update_id: update.update_id }; // stub
-		}
-
-		const manifestId = parts[1];
-		const action = parts[2];
-		if (action !== "approve" && action !== "reject") {
-			console.warn(`[egress-telegram] Malformed callback data: ${callbackData}`);
-			return { update_id: update.update_id }; // stub
-		}
-
-		const approved = action === "approve";
-		const resolved = interceptor.resolveConfirmation(manifestId, approved);
-
-		// Answer the callback (fire-and-forget)
-		interceptor
-			.telegramApi("answerCallbackQuery", {
-				callback_query_id: callback_query.id,
-				text: resolved
-					? approved
-						? "Approved"
-						: "Rejected"
-					: "Action not found (may have timed out)",
-				show_alert: !resolved,
-			})
-			.catch((err) => {
-				console.warn(`[egress-telegram] answerCallbackQuery failed: ${err}`);
-			});
-
-		return { update_id: update.update_id }; // stub — preserves offset
 	});
 }
 
@@ -438,16 +462,26 @@ export function createEgressProxyHandler(
 			// Telegram getUpdates interception — before credential redaction
 			if (isTelegramGetUpdates && telegramInterceptor && upstreamResponse.status === 200) {
 				try {
-					const parsed = JSON.parse(rawBody) as {
-						ok?: boolean;
-						result?: TelegramUpdate[];
-					};
+					const parsed = JSON.parse(rawBody) as Record<string, unknown>;
 					if (parsed.ok === true && Array.isArray(parsed.result)) {
-						const intercepted = interceptTelegramUpdates(parsed.result, telegramInterceptor);
-						rawBody = JSON.stringify({ ok: true, result: intercepted });
+						const intercepted = interceptTelegramUpdates(
+							parsed.result as TelegramUpdate[],
+							telegramInterceptor,
+						);
+						// Preserve original envelope fields (e.g., description), only replace result
+						parsed.result = intercepted;
+						rawBody = JSON.stringify(parsed);
+					} else if (parsed.ok === false) {
+						console.warn(
+							`[egress-telegram][${reqId}] getUpdates returned ok:false — interception skipped`,
+						);
 					}
-				} catch {
-					// JSON parse failed — fall through to normal processing
+				} catch (parseErr) {
+					console.warn(
+						`[egress-telegram][${reqId}] Failed to parse getUpdates response as JSON — ` +
+							`confirmation interception skipped for this cycle. ` +
+							`Error: ${parseErr instanceof Error ? parseErr.message : "Unknown"}`,
+					);
 				}
 			}
 

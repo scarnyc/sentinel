@@ -65,18 +65,13 @@ export function createApp(
 	const app = new Hono();
 	const pendingConfirmations = new Map<string, PendingConfirmation>();
 
-	// SENTINEL: Shared confirmation resolver — used by both HTTP endpoint and Telegram adapter
+	// SENTINEL: Shared confirmation resolver — used by HTTP endpoint and egress proxy interceptor
 	function resolveConfirmation(manifestId: string, approved: boolean): boolean {
 		const pending = pendingConfirmations.get(manifestId);
 		if (!pending) return false;
 		pendingConfirmations.delete(manifestId);
 		pending.resolve(approved);
 		return true;
-	}
-
-	// SENTINEL: Wire Telegram adapter to resolve confirmations from callback queries
-	if (telegramAdapter) {
-		telegramAdapter.bindResolver(resolveConfirmation);
 	}
 
 	// SENTINEL: Phase 1 pipeline guards — rate limiter and loop guard
@@ -314,12 +309,7 @@ export function createApp(
 	if (egressBindings && egressBindings.length > 0) {
 		// SENTINEL: Wire Telegram interceptor to intercept getUpdates responses in egress proxy
 		const telegramInterceptor: TelegramInterceptor | undefined = telegramAdapter
-			? {
-					chatId: telegramAdapter.chatId,
-					resolveConfirmation,
-					telegramApi: (method: string, params: Record<string, unknown>) =>
-						telegramAdapter.telegramApi(method, params),
-				}
+			? telegramAdapter.toInterceptor(resolveConfirmation)
 			: undefined;
 
 		app.post(

@@ -109,8 +109,10 @@ if (vault) {
 		);
 		telegramAdapter = new TelegramConfirmAdapter(vault, chatId);
 		console.log("[sentinel] Telegram adapter created from vault credentials");
-	} catch {
-		// TELEGRAM_CHAT not in vault — fall back to env var
+	} catch (vaultErr) {
+		console.warn(
+			`[sentinel] TELEGRAM_CHAT vault lookup failed (falling back to env var): ${vaultErr instanceof Error ? vaultErr.message : "Unknown"}`,
+		);
 		const telegramChatId = process.env.SENTINEL_TELEGRAM_CHAT_ID;
 		if (telegramChatId) {
 			try {
@@ -147,6 +149,16 @@ const host = "0.0.0.0";
 serve({ fetch: app.fetch, port, hostname: host }, () => {
 	console.log(`Sentinel Executor listening on http://${host}:${port}`);
 	if (telegramAdapter) {
-		console.log("[sentinel] Telegram confirmations active (via egress proxy interception)");
+		const hasTelegramBinding = egressBindings.some((b) =>
+			b.allowedDomains.some((d) => d === "api.telegram.org"),
+		);
+		if (!hasTelegramBinding) {
+			console.error(
+				"[sentinel] WARNING: Telegram adapter created but no egress binding for api.telegram.org — " +
+					"confirmation callbacks will NOT be intercepted. Add api.telegram.org to SENTINEL_EGRESS_BINDINGS.",
+			);
+		} else {
+			console.log("[sentinel] Telegram confirmations active (via egress proxy interception)");
+		}
 	}
 });

@@ -97,6 +97,18 @@ describe("TelegramConfirmAdapter", () => {
 			expect(typeof adapter.chatId).toBe("number");
 		});
 
+		it("toInterceptor returns a valid TelegramInterceptor", () => {
+			const vault = createMockVault();
+			const adapter = new TelegramConfirmAdapter(vault, "12345");
+			const resolver = vi.fn().mockReturnValue(true);
+			const interceptor = adapter.toInterceptor(resolver);
+
+			expect(interceptor.isAuthorizedChat(12345)).toBe(true);
+			expect(interceptor.isAuthorizedChat(99999)).toBe(false);
+			expect(interceptor.resolveConfirmation).toBe(resolver);
+			expect(typeof interceptor.acknowledgeCallback).toBe("function");
+		});
+
 		it("telegramApi is public and callable externally", async () => {
 			const mockFetch = vi.fn().mockResolvedValue(
 				new Response(JSON.stringify({ ok: true, result: true }), {

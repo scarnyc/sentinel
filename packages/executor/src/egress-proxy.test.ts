@@ -53,12 +53,13 @@ function createTestApp(options?: {
 
 function createMockInterceptor(chatId = 12345): TelegramInterceptor & {
 	resolveConfirmation: ReturnType<typeof vi.fn>;
-	telegramApi: ReturnType<typeof vi.fn>;
+	acknowledgeCallback: ReturnType<typeof vi.fn>;
+	isAuthorizedChat: ReturnType<typeof vi.fn>;
 } {
 	return {
-		chatId,
+		isAuthorizedChat: vi.fn().mockImplementation((id: number) => id === chatId),
 		resolveConfirmation: vi.fn().mockReturnValue(true),
-		telegramApi: vi.fn().mockResolvedValue(undefined),
+		acknowledgeCallback: vi.fn().mockResolvedValue(undefined),
 	};
 }
 
@@ -244,11 +245,7 @@ describe("Telegram getUpdates interception", () => {
 		expect(json.result[0]).toEqual({ update_id: 100 });
 
 		expect(interceptor.resolveConfirmation).toHaveBeenCalledWith("manifest-abc", true);
-		expect(interceptor.telegramApi).toHaveBeenCalledWith("answerCallbackQuery", {
-			callback_query_id: "cb1",
-			text: "Approved",
-			show_alert: false,
-		});
+		expect(interceptor.acknowledgeCallback).toHaveBeenCalledWith("cb1", "Approved", false);
 	});
 
 	it("passes non-confirm callbacks through unmodified", async () => {
@@ -415,7 +412,7 @@ describe("Telegram getUpdates interception", () => {
 		expect(interceptor.resolveConfirmation).not.toHaveBeenCalled();
 	});
 
-	it("unauthorized chat ID → stubbed but resolveConfirmation NOT called", async () => {
+	it("unauthorized chat ID → stubbed, answerCallbackQuery called, resolveConfirmation NOT called", async () => {
 		const interceptor = createMockInterceptor(99999);
 		const updates = [
 			{
@@ -436,13 +433,15 @@ describe("Telegram getUpdates interception", () => {
 		const json = (await res.json()) as { ok: boolean; result: unknown[] };
 		expect(json.result[0]).toEqual({ update_id: 300 });
 		expect(interceptor.resolveConfirmation).not.toHaveBeenCalled();
+		// Pen test Finding 7: answer unauthorized callbacks to prevent re-delivery
+		expect(interceptor.acknowledgeCallback).toHaveBeenCalledWith("cb-unauth", "Unauthorized", true);
 		expect(warnSpy).toHaveBeenCalledWith(
 			expect.stringContaining("SECURITY: callback from unauthorized chat"),
 		);
 		warnSpy.mockRestore();
 	});
 
-	it("malformed callback data (wrong number of parts) → stubbed, not resolved", async () => {
+	it("malformed callback data (wrong number of parts) → stubbed, answerCallbackQuery called, not resolved", async () => {
 		const interceptor = createMockInterceptor();
 		const updates = [
 			{
@@ -463,13 +462,18 @@ describe("Telegram getUpdates interception", () => {
 		const json = (await res.json()) as { ok: boolean; result: unknown[] };
 		expect(json.result[0]).toEqual({ update_id: 400 });
 		expect(interceptor.resolveConfirmation).not.toHaveBeenCalled();
+		expect(interceptor.acknowledgeCallback).toHaveBeenCalledWith(
+			"cb-bad",
+			"Invalid callback data",
+			true,
+		);
 		expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Malformed callback data"));
 		warnSpy.mockRestore();
 	});
 
-	it("answerCallbackQuery failure → logged warning, non-blocking", async () => {
+	it("answerCallbackQuery failure → logged error, non-blocking", async () => {
 		const interceptor = createMockInterceptor();
-		interceptor.telegramApi.mockRejectedValue(new Error("Telegram API down"));
+		interceptor.acknowledgeCallback.mockRejectedValue(new Error("Telegram API down"));
 		const updates = [
 			{
 				update_id: 500,
@@ -482,7 +486,7 @@ describe("Telegram getUpdates interception", () => {
 		];
 		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(makeTelegramResponse(updates)));
 
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 		const { app } = createTestApp({ telegramInterceptor: interceptor });
 		const res = await postEgress(app, makeGetUpdatesRequest());
 
@@ -493,9 +497,9 @@ describe("Telegram getUpdates interception", () => {
 
 		// Wait for the fire-and-forget promise to settle
 		await vi.waitFor(() => {
-			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("answerCallbackQuery failed"));
+			expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("answerCallbackQuery failed"));
 		});
-		warnSpy.mockRestore();
+		errorSpy.mockRestore();
 	});
 
 	it("no TelegramInterceptor configured → all responses pass through unchanged", async () => {
@@ -543,12 +547,12 @@ describe("Telegram getUpdates interception", () => {
 		expect(json.result[0]).toEqual({ update_id: 700 });
 		expect(interceptor.resolveConfirmation).toHaveBeenCalledWith("m5", true);
 
-		// answerCallbackQuery should report "timed out" for unresolved
-		expect(interceptor.telegramApi).toHaveBeenCalledWith("answerCallbackQuery", {
-			callback_query_id: "cb-dup",
-			text: "Action not found (may have timed out)",
-			show_alert: true,
-		});
+		// acknowledgeCallback should report "timed out" for unresolved
+		expect(interceptor.acknowledgeCallback).toHaveBeenCalledWith(
+			"cb-dup",
+			"Action not found (may have timed out)",
+			true,
+		);
 	});
 
 	it("re-serialized response has valid ok: true and result array structure", async () => {
@@ -577,6 +581,121 @@ describe("Telegram getUpdates interception", () => {
 		expect(json.result[0]).toHaveProperty("message");
 		// Second is a stub
 		expect(json.result[1]).toEqual({ update_id: 801 });
+	});
+
+	it("invalid action (e.g., confirm:id:explode) → stubbed, answerCallbackQuery called, not resolved", async () => {
+		const interceptor = createMockInterceptor();
+		const updates = [
+			{
+				update_id: 900,
+				callback_query: {
+					id: "cb-explode",
+					data: "confirm:m7:explode",
+					message: { chat: { id: 12345 } },
+				},
+			},
+		];
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(makeTelegramResponse(updates)));
+
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const { app } = createTestApp({ telegramInterceptor: interceptor });
+		const res = await postEgress(app, makeGetUpdatesRequest());
+
+		const json = (await res.json()) as { ok: boolean; result: unknown[] };
+		expect(json.result[0]).toEqual({ update_id: 900 });
+		expect(interceptor.resolveConfirmation).not.toHaveBeenCalled();
+		expect(interceptor.acknowledgeCallback).toHaveBeenCalledWith(
+			"cb-explode",
+			"Unknown action",
+			true,
+		);
+		expect(warnSpy).toHaveBeenCalledWith(
+			expect.stringContaining("Unknown action in callback data"),
+		);
+		warnSpy.mockRestore();
+	});
+
+	it("empty updates array → passes through unchanged", async () => {
+		const interceptor = createMockInterceptor();
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(makeTelegramResponse([])));
+
+		const { app } = createTestApp({ telegramInterceptor: interceptor });
+		const res = await postEgress(app, makeGetUpdatesRequest());
+
+		const json = (await res.json()) as { ok: boolean; result: unknown[] };
+		expect(json.ok).toBe(true);
+		expect(json.result).toEqual([]);
+		expect(interceptor.resolveConfirmation).not.toHaveBeenCalled();
+	});
+
+	it("callback_query with missing message field → stubbed as unauthorized, not resolved", async () => {
+		const interceptor = createMockInterceptor();
+		const updates = [
+			{
+				update_id: 950,
+				callback_query: {
+					id: "cb-no-msg",
+					data: "confirm:m8:approve",
+					// No message field — inline mode edge case
+				},
+			},
+		];
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(makeTelegramResponse(updates)));
+
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const { app } = createTestApp({ telegramInterceptor: interceptor });
+		const res = await postEgress(app, makeGetUpdatesRequest());
+
+		const json = (await res.json()) as { ok: boolean; result: unknown[] };
+		expect(json.result[0]).toEqual({ update_id: 950 });
+		expect(interceptor.resolveConfirmation).not.toHaveBeenCalled();
+		expect(warnSpy).toHaveBeenCalledWith(
+			expect.stringContaining("SECURITY: callback from unauthorized chat"),
+		);
+		warnSpy.mockRestore();
+	});
+
+	it("ok:false in 200 response → interception skipped with warning", async () => {
+		const interceptor = createMockInterceptor();
+		const response = new Response(
+			JSON.stringify({ ok: false, error_code: 409, description: "Conflict" }),
+			{ status: 200, headers: { "content-type": "application/json" } },
+		);
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const { app } = createTestApp({ telegramInterceptor: interceptor });
+		const res = await postEgress(app, makeGetUpdatesRequest());
+
+		expect(res.status).toBe(200);
+		const json = (await res.json()) as { ok: boolean; error_code: number };
+		expect(json.ok).toBe(false);
+		expect(json.error_code).toBe(409);
+		expect(interceptor.resolveConfirmation).not.toHaveBeenCalled();
+		expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("getUpdates returned ok:false"));
+		warnSpy.mockRestore();
+	});
+
+	it("non-JSON getUpdates response body → interception skipped with warning", async () => {
+		const interceptor = createMockInterceptor();
+		const response = new Response("<html>502 Bad Gateway</html>", {
+			status: 200,
+			headers: { "content-type": "text/html" },
+		});
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const { app } = createTestApp({ telegramInterceptor: interceptor });
+		const res = await postEgress(app, makeGetUpdatesRequest());
+
+		expect(res.status).toBe(200);
+		const body = await res.text();
+		expect(body).toContain("502 Bad Gateway");
+		expect(interceptor.resolveConfirmation).not.toHaveBeenCalled();
+		expect(warnSpy).toHaveBeenCalledWith(
+			expect.stringContaining("Failed to parse getUpdates response as JSON"),
+		);
+		warnSpy.mockRestore();
 	});
 
 	it("long-poll timeout: getUpdates with timeout > 45 → upstream timeout extended", async () => {

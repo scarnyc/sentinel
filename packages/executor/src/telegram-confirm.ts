@@ -1,5 +1,6 @@
 import type { CredentialVault } from "@sentinel/crypto";
 import { redactAll } from "@sentinel/types";
+import type { TelegramInterceptor } from "./egress-proxy.js";
 
 const PARAM_TRUNCATE_LIMIT = 200;
 /** Telegram limits callback_data to 64 bytes */
@@ -16,7 +17,6 @@ export interface TelegramConfirmRequest {
 export class TelegramConfirmAdapter {
 	private readonly vault: CredentialVault;
 	public readonly chatId: number;
-	private resolveConfirmation: (id: string, approved: boolean) => boolean;
 
 	constructor(vault: CredentialVault, chatId: string) {
 		const parsed = Number.parseInt(chatId, 10);
@@ -25,16 +25,25 @@ export class TelegramConfirmAdapter {
 		}
 		this.vault = vault;
 		this.chatId = parsed;
-		// Default no-op — replaced by createApp via bindResolver()
-		this.resolveConfirmation = () => false;
 	}
 
 	/**
-	 * Bind the resolver function from createApp's pendingConfirmations Map.
-	 * Must be called for egress proxy callback interception to resolve confirmations.
+	 * Create a TelegramInterceptor for the egress proxy.
+	 * Encapsulates chat ID authorization and callback acknowledgement.
 	 */
-	bindResolver(fn: (id: string, approved: boolean) => boolean): void {
-		this.resolveConfirmation = fn;
+	toInterceptor(
+		resolveConfirmation: (id: string, approved: boolean) => boolean,
+	): TelegramInterceptor {
+		return {
+			isAuthorizedChat: (id: number) => id === this.chatId,
+			resolveConfirmation,
+			acknowledgeCallback: (queryId: string, text: string, showAlert: boolean) =>
+				this.telegramApi("answerCallbackQuery", {
+					callback_query_id: queryId,
+					text,
+					show_alert: showAlert,
+				}).then(() => {}),
+		};
 	}
 
 	async sendConfirmation(req: TelegramConfirmRequest): Promise<number | undefined> {
