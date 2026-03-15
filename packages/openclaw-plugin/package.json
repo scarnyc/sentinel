@@ -7,7 +7,7 @@
 	"types": "./dist/index.d.ts",
 	"openclaw": {
 		"extensions": [
-			"./dist/register.js"
+			"./dist/bundle/register.js"
 		]
 	},
 	"exports": {
@@ -21,7 +21,7 @@
 		}
 	},
 	"scripts": {
-		"build": "tsc --build",
+		"build": "tsc --build && tsup --config tsup.bundle.config.ts",
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run"
 	},
