@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { execFileSync, execSync } from "node:child_process";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -111,7 +112,14 @@ export async function startCommand(projectRoot: string, services: string[]): Pro
 		}
 	}
 
-	const composeEnv: Record<string, string> = {};
+	// SENTINEL: Generate a shared auth token for executor ↔ gateway communication.
+	// Both services read SENTINEL_AUTH_TOKEN from env; if empty, executor auto-generates
+	// one internally but the gateway can't match it. Generate here so both share the same value.
+	const authToken = process.env.SENTINEL_AUTH_TOKEN || randomBytes(32).toString("hex");
+
+	const composeEnv: Record<string, string> = {
+		SENTINEL_AUTH_TOKEN: authToken,
+	};
 	if (vaultPassword) {
 		composeEnv.SENTINEL_VAULT_PASSWORD = vaultPassword;
 	}
