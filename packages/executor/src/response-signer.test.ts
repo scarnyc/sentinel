@@ -76,7 +76,7 @@ describe("verifyResponseSignature", () => {
 describe("createResponseSigner middleware", () => {
 	it("adds HMAC signature to JSON responses", async () => {
 		const secret = randomBytes(32);
-		const app = createApp(DEFAULT_CONFIG, auditLogger, registry, undefined, secret);
+		const app = createApp(DEFAULT_CONFIG, auditLogger, registry, undefined, secret).app;
 
 		const res = await app.request("/health");
 		expect(res.status).toBe(200);
@@ -108,7 +108,7 @@ describe("createResponseSigner middleware", () => {
 
 	it("no secret -> no signature header (backward compat)", async () => {
 		// Create app WITHOUT hmacSecret
-		const app = createApp(DEFAULT_CONFIG, auditLogger, registry);
+		const app = createApp(DEFAULT_CONFIG, auditLogger, registry).app;
 
 		const res = await app.request("/health");
 		expect(res.status).toBe(200);

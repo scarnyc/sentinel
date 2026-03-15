@@ -59,7 +59,7 @@ beforeEach(() => {
 	const dbPath = join(tempDir, "audit.db");
 	auditLogger = new AuditLogger(dbPath);
 	registry = createToolRegistry();
-	app = createApp(DEFAULT_CONFIG, auditLogger, registry);
+	app = createApp(DEFAULT_CONFIG, auditLogger, registry).app;
 });
 
 afterEach(() => {
@@ -300,7 +300,7 @@ describe("Security Invariant #6: Policy changes require restart", () => {
 		const config = structuredClone(DEFAULT_CONFIG);
 		config.autoApproveReadOps = true;
 		const frozenConfig = Object.freeze(structuredClone(config));
-		const testApp = createApp(frozenConfig, auditLogger, registry);
+		const testApp = createApp(frozenConfig, auditLogger, registry).app;
 
 		// Read op should auto-approve with autoApproveReadOps=true
 		const readManifest = makeManifest({

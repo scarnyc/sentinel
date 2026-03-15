@@ -54,7 +54,7 @@ beforeEach(() => {
 	const dbPath = join(tempDir, "audit.db");
 	auditLogger = new AuditLogger(dbPath);
 	registry = createToolRegistry();
-	app = createApp(DEFAULT_CONFIG, auditLogger, registry);
+	app = createApp(DEFAULT_CONFIG, auditLogger, registry).app;
 });
 
 afterEach(() => {

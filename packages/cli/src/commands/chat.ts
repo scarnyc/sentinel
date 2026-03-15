@@ -64,7 +64,7 @@ export async function chatCommand(config: SentinelConfig, _dataDir: string): Pro
 	// Start executor (in-process for local dev)
 	const auditLogger = new AuditLogger(config.auditLogPath);
 	const registry = createToolRegistry({ allowedRoots: config.allowedRoots });
-	const app = createApp(config, auditLogger, registry);
+	const { app } = createApp(config, auditLogger, registry);
 
 	const server = serve({
 		fetch: app.fetch,

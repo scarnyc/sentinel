@@ -93,7 +93,7 @@ beforeEach(() => {
 	auditLogger = new AuditLogger(join(tempDir, "audit.db"));
 	registry = createToolRegistry({ allowedRoots: [tempDir] });
 	delegationQueue = new DelegationQueue(join(tempDir, "delegation.db"));
-	app = createApp(DEFAULT_CONFIG, auditLogger, registry, undefined, undefined, delegationQueue);
+	app = createApp(DEFAULT_CONFIG, auditLogger, registry, undefined, undefined, delegationQueue).app;
 });
 
 afterEach(() => {

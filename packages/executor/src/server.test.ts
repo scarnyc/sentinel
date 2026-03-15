@@ -58,7 +58,7 @@ beforeEach(() => {
 	registry = createToolRegistry();
 
 	// Create app with auto-approve confirmFn (overridden per-test when needed)
-	app = createApp(DEFAULT_CONFIG, auditLogger, registry);
+	app = createApp(DEFAULT_CONFIG, auditLogger, registry).app;
 });
 
 afterEach(() => {
@@ -452,7 +452,7 @@ describe("M7: unhandled exception audit logging (I2)", () => {
 				{ tool: "crash-tool", defaultCategory: "read" as const },
 			],
 		};
-		const crashApp = createApp(crashConfig, auditLogger, throwingRegistry);
+		const crashApp = createApp(crashConfig, auditLogger, throwingRegistry).app;
 
 		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 

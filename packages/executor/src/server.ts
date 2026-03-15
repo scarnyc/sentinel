@@ -61,11 +61,11 @@ export function createApp(
 	delegationQueue?: DelegationQueue,
 	egressBindings?: EgressBinding[],
 	telegramAdapter?: TelegramConfirmAdapter,
-): Hono {
+): { app: Hono; resolveConfirmation: (manifestId: string, approved: boolean) => boolean } {
 	const app = new Hono();
 	const pendingConfirmations = new Map<string, PendingConfirmation>();
 
-	// SENTINEL: Shared confirmation resolver — used by HTTP endpoint and egress proxy interceptor
+	// SENTINEL: Shared confirmation resolver — used by HTTP endpoint, egress proxy, and fallback polling
 	function resolveConfirmation(manifestId: string, approved: boolean): boolean {
 		const pending = pendingConfirmations.get(manifestId);
 		if (!pending) return false;
@@ -371,5 +371,5 @@ export function createApp(
 		return c.json({ status: parsed.data.approved ? "approved" : "denied" });
 	});
 
-	return app;
+	return { app, resolveConfirmation };
 }

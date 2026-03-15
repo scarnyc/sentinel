@@ -132,7 +132,7 @@ if (vault) {
 	);
 }
 
-const app = createApp(
+const { app, resolveConfirmation } = createApp(
 	config,
 	auditLogger,
 	registry,
@@ -152,13 +152,15 @@ serve({ fetch: app.fetch, port, hostname: host }, () => {
 		const hasTelegramBinding = egressBindings.some((b) =>
 			b.allowedDomains.some((d) => d === "api.telegram.org"),
 		);
-		if (!hasTelegramBinding) {
-			console.error(
-				"[sentinel] WARNING: Telegram adapter created but no egress binding for api.telegram.org — " +
-					"confirmation callbacks will NOT be intercepted. Add api.telegram.org to SENTINEL_EGRESS_BINDINGS.",
-			);
-		} else {
+		if (hasTelegramBinding) {
 			console.log("[sentinel] Telegram confirmations active (via egress proxy interception)");
+		} else {
+			// Host deployment: OpenClaw calls Telegram directly, egress interception won't work.
+			// Fall back to direct polling for callback_query updates.
+			console.log(
+				"[sentinel] No egress binding for api.telegram.org — starting fallback Telegram polling",
+			);
+			telegramAdapter.startFallbackPolling(resolveConfirmation);
 		}
 	}
 });

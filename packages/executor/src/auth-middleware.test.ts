@@ -31,7 +31,7 @@ function createAppWithAuth(authToken?: string): Hono {
 		...BASE_CONFIG,
 		...(authToken !== undefined ? { authToken } : {}),
 	};
-	return createApp(config, auditLogger, registry);
+	return createApp(config, auditLogger, registry).app;
 }
 
 beforeEach(() => {

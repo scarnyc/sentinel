@@ -6,6 +6,29 @@ const PARAM_TRUNCATE_LIMIT = 200;
 /** Telegram limits callback_data to 64 bytes */
 const MAX_CALLBACK_DATA_LENGTH = 64;
 
+// Fallback polling constants (used when egress proxy interception isn't available)
+const POLL_TIMEOUT_SECONDS = 30;
+const POLL_ERROR_DELAY_MS = 5_000;
+/** Longer backoff for 409 conflicts — gives competing session time to release */
+const POLL_CONFLICT_DELAY_MS = 15_000;
+/** Stop polling after this many consecutive errors (permanent failure assumed) */
+const MAX_CONSECUTIVE_ERRORS = 10;
+
+interface CallbackQuery {
+	id: string;
+	data?: string;
+	message?: { chat?: { id: number } };
+}
+
+interface TelegramUpdate {
+	update_id: number;
+	callback_query?: CallbackQuery;
+}
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export interface TelegramConfirmRequest {
 	manifestId: string;
 	tool: string;
@@ -17,6 +40,9 @@ export interface TelegramConfirmRequest {
 export class TelegramConfirmAdapter {
 	private readonly vault: CredentialVault;
 	public readonly chatId: number;
+	private resolveConfirmation: (id: string, approved: boolean) => boolean = () => false;
+	private running = false;
+	private offset = 0;
 
 	constructor(vault: CredentialVault, chatId: string) {
 		const parsed = Number.parseInt(chatId, 10);
@@ -30,6 +56,7 @@ export class TelegramConfirmAdapter {
 	/**
 	 * Create a TelegramInterceptor for the egress proxy.
 	 * Encapsulates chat ID authorization and callback acknowledgement.
+	 * Used in Docker deployment where OpenClaw routes through /proxy/egress.
 	 */
 	toInterceptor(
 		resolveConfirmation: (id: string, approved: boolean) => boolean,
@@ -44,6 +71,130 @@ export class TelegramConfirmAdapter {
 					show_alert: showAlert,
 				}).then(() => {}),
 		};
+	}
+
+	/**
+	 * Start fallback polling for callback_query updates.
+	 * Used when OpenClaw is NOT routing through /proxy/egress (host deployment).
+	 * Will get 409 conflicts if OpenClaw also polls getUpdates — handled with backoff.
+	 */
+	startFallbackPolling(resolveConfirmation: (id: string, approved: boolean) => boolean): void {
+		if (this.running) return;
+		this.resolveConfirmation = resolveConfirmation;
+		this.running = true;
+		console.log("[telegram] Starting fallback polling (host mode — expect occasional 409s)");
+
+		// Clear stale connections before starting
+		this.telegramApi("deleteWebhook", { drop_pending_updates: true })
+			.then(() => console.log("[telegram] deleteWebhook OK — cleared stale connections"))
+			.catch((err) =>
+				console.warn(
+					`[telegram] deleteWebhook failed (polling may 409): ${err instanceof Error ? err.message : "Unknown"}`,
+				),
+			)
+			.finally(() => {
+				void this.pollLoop();
+			});
+	}
+
+	stop(): void {
+		this.running = false;
+	}
+
+	private async pollLoop(): Promise<void> {
+		let consecutiveErrors = 0;
+
+		while (this.running) {
+			try {
+				const updates = (await this.telegramApi("getUpdates", {
+					offset: this.offset,
+					timeout: POLL_TIMEOUT_SECONDS,
+				})) as TelegramUpdate[];
+
+				consecutiveErrors = 0;
+
+				for (const update of updates) {
+					this.offset = update.update_id + 1;
+					if (update.callback_query) {
+						await this.handleCallbackQuery(update.callback_query);
+					}
+				}
+
+				await sleep(0); // yield to event loop
+			} catch (err) {
+				consecutiveErrors++;
+				const msg = err instanceof Error ? err.message : "Unknown";
+				const is409 = msg.includes("409");
+
+				console.error(
+					`[telegram] Poll error (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}): ${msg}`,
+				);
+
+				if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+					const hint = is409
+						? "Another bot instance may be using the same token. Check for duplicate deployments."
+						: "Check TELEGRAM vault credentials and network connectivity.";
+					console.error(
+						`[telegram] FATAL: ${consecutiveErrors} consecutive poll failures — stopping adapter. ${hint}`,
+					);
+					this.running = false;
+					return;
+				}
+
+				// 409 = competing getUpdates session; use longer backoff
+				await sleep(is409 ? POLL_CONFLICT_DELAY_MS : POLL_ERROR_DELAY_MS);
+			}
+		}
+	}
+
+	private async handleCallbackQuery(query: CallbackQuery): Promise<void> {
+		const chatId = query.message?.chat?.id;
+		if (chatId !== this.chatId) {
+			console.warn(`[telegram] SECURITY: callback_query from unauthorized chat ${chatId}`);
+			await this.telegramApi("answerCallbackQuery", {
+				callback_query_id: query.id,
+				text: "Unauthorized",
+				show_alert: true,
+			}).catch((answerErr) => {
+				console.error(
+					`[telegram] answerCallbackQuery (unauthorized) failed: ${answerErr instanceof Error ? answerErr.message : "Unknown"}`,
+				);
+			});
+			return;
+		}
+
+		const data = query.data;
+		if (!data?.startsWith("confirm:")) return;
+
+		const parts = data.split(":");
+		if (parts.length !== 3) {
+			console.warn(`[telegram] Malformed callback data: ${data}`);
+			return;
+		}
+
+		const manifestId = parts[1];
+		const action = parts[2];
+		if (action !== "approve" && action !== "reject") {
+			console.warn(`[telegram] Unknown action in callback data: ${data}`);
+			return;
+		}
+
+		const approved = action === "approve";
+		const resolved = this.resolveConfirmation(manifestId, approved);
+
+		await this.telegramApi("answerCallbackQuery", {
+			callback_query_id: query.id,
+			text: resolved
+				? approved
+					? "✅ Approved"
+					: "❌ Rejected"
+				: "⚠ Action not found (may have timed out)",
+			show_alert: !resolved,
+		}).catch((answerErr) => {
+			console.error(
+				`[telegram] answerCallbackQuery failed: ${answerErr instanceof Error ? answerErr.message : "Unknown"}`,
+			);
+		});
 	}
 
 	async sendConfirmation(req: TelegramConfirmRequest): Promise<number | undefined> {
