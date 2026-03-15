@@ -125,6 +125,7 @@ export async function startCommand(projectRoot: string, services: string[]): Pro
 	}
 
 	console.log(`Starting Sentinel (${targets.join(", ")})...`);
+	console.log(`Auth token: ${authToken.slice(0, 8)}...${authToken.slice(-4)} (${authToken.length} chars)`);
 
 	// Build images
 	console.log("Building Docker images...");
@@ -144,7 +145,9 @@ export async function startCommand(projectRoot: string, services: string[]): Pro
 	// Start containers
 	console.log("Starting containers...");
 	try {
-		run(projectRoot, "docker", ["compose", "-f", composeFile, "up", "-d", ...targets], composeEnv);
+		// SENTINEL: --force-recreate ensures containers pick up new env vars (auth token, vault password)
+		// Without this, docker compose may reuse existing containers with stale env values.
+		run(projectRoot, "docker", ["compose", "-f", composeFile, "up", "-d", "--force-recreate", ...targets], composeEnv);
 	} catch (err) {
 		console.error("Failed to start:", err instanceof Error ? err.message : String(err));
 		process.exit(1);
