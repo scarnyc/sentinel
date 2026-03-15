@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { execFileSync, execSync } from "node:child_process";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 
 function run(
@@ -155,6 +157,42 @@ export async function startCommand(projectRoot: string, services: string[]): Pro
 
 	// Clear password from memory
 	vaultPassword = undefined;
+
+	// SENTINEL: Sync auth token into host OpenClaw config so LLM proxy calls authenticate.
+	// OpenClaw stores the executor token in models.providers.sentinel-openai.apiKey.
+	const openclawConfigPath = join(homedir(), ".openclaw", "openclaw.json");
+	if (existsSync(openclawConfigPath)) {
+		try {
+			const raw = readFileSync(openclawConfigPath, "utf-8");
+			const ocConfig = JSON.parse(raw) as Record<string, unknown>;
+			const models = ocConfig.models as Record<string, unknown> | undefined;
+			const providers = models?.providers as Record<string, Record<string, unknown>> | undefined;
+			if (providers) {
+				let updated = false;
+				for (const [name, provider] of Object.entries(providers)) {
+					const baseUrl = provider.baseUrl as string | undefined;
+					if (baseUrl && baseUrl.includes("localhost:3141")) {
+						provider.apiKey = authToken;
+						updated = true;
+						console.log(`Updated ${name} provider apiKey in openclaw.json`);
+					}
+				}
+				// Also update plugin config if present
+				const plugins = ocConfig.plugins as Record<string, unknown> | undefined;
+				const entries = plugins?.entries as Record<string, Record<string, unknown>> | undefined;
+				const sentinel = entries?.sentinel as Record<string, Record<string, unknown>> | undefined;
+				if (sentinel?.config) {
+					sentinel.config.authToken = authToken;
+					updated = true;
+				}
+				if (updated) {
+					writeFileSync(openclawConfigPath, JSON.stringify(ocConfig, null, "\t"), "utf-8");
+				}
+			}
+		} catch (err) {
+			console.warn(`[sentinel] Could not update openclaw.json: ${err instanceof Error ? err.message : "Unknown"}`);
+		}
+	}
 
 	// Wait for each service to be healthy
 	let allHealthy = true;
