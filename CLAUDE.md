@@ -20,6 +20,7 @@ Optional follow-up (separate commit) | The config only has sentinel-openai provi
 10. Fix set-up and create guide to make it more intuitive and user friendly
 11. use ag-ui protocol for all UI approve / rejects
 12. secure telegram channels upon server wind-down
+13. Fix vault password masking upon `sentinel start`
 
 **Phase 1 completed** (PR #8, 490 tests). **Memory store** (PR #9, 542 tests). **Phase 2** decomposes into 4 waves.
 
