@@ -265,6 +265,9 @@ export async function startCommand(projectRoot: string, services: string[]): Pro
 		SENTINEL_CONFIRM_BASE_URL: confirmBaseUrl,
 		// Egress bindings: use host env override if set, otherwise default with Telegram
 		SENTINEL_EGRESS_BINDINGS: process.env.SENTINEL_EGRESS_BINDINGS || defaultEgressBindings,
+		// SENTINEL: CONNECT tunnel proxy — gateway routes HTTPS through executor
+		HTTPS_PROXY: "http://executor:3141",
+		NO_PROXY: "executor",
 	};
 	if (vaultPassword) {
 		composeEnv.SENTINEL_VAULT_PASSWORD = vaultPassword;

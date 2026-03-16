@@ -29,6 +29,7 @@ Optional follow-up (separate commit) | The config only has sentinel-openai provi
 15. Plugin hot-reload — currently requires gateway restart
 16. secure telegram channels upon server wind-down
 17. Fix vault password masking upon `sentinel start`
+18. Custom undici dispatcher | Full content visibility through CONNECT tunnels (follow-up to domain-level CONNECT proxy). Placeholder injection at proxy. More work but no compromises. Could be built as a general-purpose solution for any library using undici
 
 
 **Phase 1 completed** (PR #8, 490 tests). **Memory store** (PR #9, 542 tests). **Phase 2** decomposes into 4 waves.
@@ -144,7 +145,10 @@ sentinel chat               # Start interactive agent session with TUI confirmat
                           └─────────────────────┘
 ```
 
-Agent sends **Action Manifests** (typed JSON) to executor over HTTP :3141. Executor validates, classifies, moderates, optionally confirms with user, executes, audits, returns sanitized results. OpenClaw agents use `/classify` (classification-only) and `/filter-output` (credential/PII scrubbing) endpoints via the `@sentinel/openclaw-plugin` package. Agent container has `internal: true` network — no direct internet access. LLM calls are proxied through executor's `/proxy/llm/*` endpoint, which injects API keys and restricts to allowlisted hosts. External API calls (Telegram, etc.) are proxied through executor's `/proxy/egress` endpoint, which injects domain-scoped credentials from the vault and applies SSRF protection. Confirmation TUI runs on host (trust anchor), never inside Docker. Telegram adapter (optional) sends confirmation prompts via bot API long-polling when `SENTINEL_TELEGRAM_CHAT_ID` is set.
+Agent sends **Action Manifests** (typed JSON) to executor over HTTP :3141. Executor validates, classifies, moderates, optionally confirms with user, executes, audits, returns sanitized results. OpenClaw agents use `/classify` (classification-only) and `/filter-output` (credential/PII scrubbing) endpoints via the `@sentinel/openclaw-plugin` package. Agent container has `internal: true` network — no direct internet access. LLM calls are proxied through executor's `/proxy/llm/*` endpoint, which injects API keys and restricts to allowlisted hosts. External API calls (Telegram, etc.) are proxied through executor's `/proxy/egress` endpoint, which injects domain-scoped credentials from the vault and applies SSRF protection.
+
+### Web Confirmation Flow
+Telegram/Slack sends web link with HMAC token → user opens on phone → `GET /confirm-ui/:id?token=...&expires=...` renders HTML → user clicks Approve → `POST /confirm/:id?token=...&expires=...` → resolves pending `/confirm-only` long-poll → OpenClaw proceeds. SSE at `/confirmations/stream` emits ag-ui Custom events (confirmation_requested/confirmation_resolved). Cloudflare tunnel (`cloudflared`) provides public HTTPS URL — auto-started by `sentinel start`.
 
 ### OpenClaw Parallel Agent Model
 
@@ -169,6 +173,7 @@ secure-openclaw/
 │   ├── agent/                   # Untrusted process (LLM loop)
 │   ├── cli/                     # Host orchestrator + TUI
 │   ├── memory/                  # Hybrid retrieval memory store (SQLite + FTS5 + sqlite-vec)
+│   ├── guard-client/            # Framework-agnostic Guard SDK (classify, filter, confirm, LLM proxy)
 │   └── openclaw-plugin/         # OpenClaw → Sentinel bridge (classify, filter, delegate)
 ├── sentinel/                    # Sentinel-specific extensions
 │   ├── manifests/               # Action manifest Zod schemas
@@ -293,6 +298,7 @@ Details in `docs/plans/path-a-v2-adopt-openfang-primitives.md` and MEMORY.md eva
 | `SENTINEL_TELEGRAM_CHAT_ID` | Container | Telegram chat/user ID for confirmation delivery (optional) |
 | `SENTINEL_CONFIRMATION_TIMEOUT_MS` | Container | Client timeout for `/confirm-only` long-polling (default 330000ms) |
 | `SENTINEL_VAULT_PASSWORD` | Container | Master password for vault decryption (prompted by `sentinel start`) |
+| `SENTINEL_CONFIRM_BASE_URL` | Container | Base URL for confirmation web links (default: localhost:3141, set by Cloudflare tunnel) |
 
 API keys stored in encrypted vault via `sentinel init`. Local dev uses `.dev.vars` (see `.dev.vars.example`). **Never** commit `.dev.vars` with real values.
 
@@ -356,8 +362,14 @@ Defined in `.claude/settings.json` — includes test, lint, and typecheck comman
 - **`openclaw gateway` in Docker** — runs on `sentinel-internal` only; all outbound traffic goes through executor's `/proxy/egress`; `npm install -g openclaw@latest` in Dockerfile stage
 - **grammY undici dispatcher** — grammY/OpenClaw use undici's internal HTTP client, not `globalThis.fetch`; HTTPS_PROXY is the only transport mechanism; fetch monkey-patching doesn't work for bundled libraries
 - **CONNECT tunnel opacity** — HTTP CONNECT provides domain-level access control but can't inspect request/response content (credential filtering, confirmation interception impossible); `setTimeout(0)` required after tunnel connect for long-polling
+- **CONNECT proxy auth** — Uses `Proxy-Authorization: Bearer <token>` header (not standard `Authorization`); `HTTPS_PROXY=http://executor:3141` in gateway container; `NO_PROXY=executor` prevents proxying internal traffic
+- **Guard Client SDK** — `@sentinel/guard-client` is zero-dep (uses global `fetch` only); standalone `tsconfig.json` with no package references; any framework can use it without pulling in Sentinel workspace deps
+- **`@hono/node-server` `serve()` return** — returns `http.Server` instance; required for `server.on('connect')` handler attachment (CONNECT tunnels bypass Hono router)
 - **OpenClaw plugin hooks** — only `before_tool_call`, `tool_result_persist`, `message_sending`, `gateway_stop` are supported; `callback_query`/`update_received` hooks do NOT exist
 - **OpenClaw pairing in Docker** — `openclaw pairing approve` must run inside the gateway container: `docker compose exec openclaw-gateway openclaw pairing approve telegram <CODE>`
+- **Plugin deployment to host OpenClaw** — after `pnpm build`, must copy `packages/openclaw-plugin/dist/*` to `~/.openclaw/extensions/sentinel/dist/` then `openclaw gateway restart`; stale plugin causes "Aborted" on confirmations
+- **Classifier unknown tool default** — unclassified tools default to `write` (confirmation required); add read-like tools (`memory_search`) to `packages/policy/src/rules.ts` `DEFAULT_CLASSIFICATIONS` AND `config/default-classifications.json`
+- **Cloudflare tunnel URL parsing** — `cloudflared tunnel --url` prints URL to stderr in `INF +--- https://random.trycloudflare.com ---+` format; PID file at `data/cloudflared.pid`; `sentinel start` auto-starts, `sentinel stop` auto-kills
 
 
 ## Build Progress
@@ -378,7 +390,8 @@ Defined in `.claude/settings.json` — includes test, lint, and typecheck comman
 | Wave 2.3a: OpenClaw Plugin | 895 | — | `/classify` + `/filter-output` endpoints, `@sentinel/openclaw-plugin` package, `delegate.code` handler, delegation queue, `sentinel setup openclaw` CLI, heartbeat monitor, setup guide |
 | Wave 2.3b: E2E Integration Tests | 903 | — | Plugin ↔ executor pipeline, delegation lifecycle, shared audit sources, fail-closed health monitor, sanitizeOutput |
 | Wave 2.3c: GWS Security Guardrails | 1106 | — | Docker GWS defaults (G2), fail-closed plugin (G3), account email validation (G4), gwsDefaultDeny (G5), E2E injection test (G6), vault failure logging (G7), test mock refactoring (G8) |
-| Wave 2.4: Plugin Wiring + Egress Proxy | TBD | — | register.ts adapter, /confirm-only endpoint, egress proxy with credential injection, Docker gateway stage, setup-openclaw fixes |
+| Wave 2.4: Plugin Wiring + Egress Proxy | 716 | #32 | register.ts adapter, /confirm-only endpoint, egress proxy, ag-ui SSE confirmation stream, web approval page, HMAC URL tokens, Cloudflare tunnel |
+| Guard SDK + CONNECT Proxy | — | — | `@sentinel/guard-client` SDK (23 tests), CONNECT tunnel proxy handler (22 tests), Docker HTTPS_PROXY wiring, gateway entrypoint prep |
 
 ### Backlog
 

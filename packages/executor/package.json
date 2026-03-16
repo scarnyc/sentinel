@@ -12,7 +12,7 @@
 		}
 	},
 	"scripts": {
-		"build": "tsc --build && tsup src/index.ts src/server.ts src/entrypoint.ts --format esm --external better-sqlite3",
+		"build": "tsc --build && tsup src/index.ts src/server.ts src/entrypoint.ts src/connect-proxy.ts --format esm --external better-sqlite3",
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run",
 		"dev": "tsx src/server.ts"
