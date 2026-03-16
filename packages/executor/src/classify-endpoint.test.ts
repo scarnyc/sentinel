@@ -131,6 +131,31 @@ describe("POST /classify", () => {
 		expect(entries[0].tool).toBe("read_file");
 	});
 
+	it("populates parameters_summary in audit entry", async () => {
+		await postClassify(app, {
+			tool: "read_file",
+			params: { path: "/tmp/test.txt" },
+			agentId: "test-agent",
+			sessionId: "test-session",
+		});
+		const entries = auditLogger.getRecent(1);
+		expect(entries[0].parameters_summary).toContain("path");
+		expect(entries[0].parameters_summary).toContain("/tmp/test.txt");
+	});
+
+	it("redacts credentials in parameters_summary", async () => {
+		const fakeKey = ["sk-ant-api03", "fake-key-value-for-testing"].join("-");
+		await postClassify(app, {
+			tool: "write_file",
+			params: { path: "/tmp/test.txt", content: `token=${fakeKey}` },
+			agentId: "test-agent",
+			sessionId: "test-session",
+		});
+		const entries = auditLogger.getRecent(1);
+		expect(entries[0].parameters_summary).not.toContain(fakeKey);
+		expect(entries[0].parameters_summary).toContain("[REDACTED]");
+	});
+
 	it("returns correct manifestId in response", async () => {
 		const res = await postClassify(app, {
 			tool: "read_file",

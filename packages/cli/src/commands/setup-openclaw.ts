@@ -12,25 +12,25 @@ const PLUGIN_DIR = join(OPENCLAW_CONFIG_DIR, "extensions", "sentinel");
 
 const TIER_CONSTRAINTS: Record<string, string> = {
 	Normal: [
-		"Standard operating constraints apply.",
-		"- Read operations auto-approved when configured",
-		"- Write operations require confirmation",
-		"- Rate limit: 60 requests/minute",
+		"You're running under Sentinel's standard security model.",
+		"Read operations (search, list, get) are auto-approved when configured.",
+		"Write operations need human confirmation before they run.",
+		"You can make up to 60 requests per minute.",
 	].join("\n"),
 	High: [
-		"Elevated security constraints apply.",
-		"- ALL operations require confirmation (no auto-approve)",
-		"- Rate limit: 30 requests/minute",
-		"- Output scanning in enforce mode",
-		"- No delegate.code unless explicitly authorized",
+		"You're running under Sentinel's elevated security model.",
+		"Every operation needs human confirmation — nothing runs automatically.",
+		"Your rate limit is 30 requests per minute.",
+		"All output is actively scanned for sensitive content.",
+		"You cannot use delegate.code unless explicitly authorized.",
 	].join("\n"),
 	Critical: [
-		"Maximum security constraints apply.",
-		"- ALL operations require confirmation with mandatory wait",
-		"- Rate limit: 10 requests/minute",
-		"- Output scanning in enforce mode with strict PII blocking",
-		"- delegate.code disabled",
-		"- Network egress blocked",
+		"You're running under Sentinel's maximum security model.",
+		"Every operation needs human confirmation with a mandatory review period.",
+		"Your rate limit is 10 requests per minute.",
+		"All output is scanned with strict PII blocking enabled.",
+		"Delegation (delegate.code) is disabled entirely.",
+		"You have no direct network access.",
 	].join("\n"),
 };
 
@@ -192,9 +192,19 @@ export async function setupOpenclawCommand(dataDir: string): Promise<void> {
 		// Inline minimal template if file not found
 		template = [
 			"# Identity",
-			"You are a Sentinel-managed agent. Sensitivity tier: {{TIER}}.",
+			"",
+			"You are a Sentinel-managed agent running at the **{{TIER}}** sensitivity tier.",
+			"All your tool calls are routed through Sentinel's executor for classification,",
+			"credential injection, and audit logging. You never see raw credentials.",
+			"",
+			"## Security Constraints",
 			"",
 			"{{TIER_CONSTRAINTS}}",
+			"",
+			"## Tool Usage",
+			"",
+			"When a tool call requires confirmation, wait for human approval before proceeding.",
+			"Do not attempt to bypass or retry rejected tool calls.",
 		].join("\n");
 	}
 
