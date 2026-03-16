@@ -45,6 +45,8 @@ CMD ["node", "packages/agent/dist/loop.js"]
 # SENTINEL: OpenClaw is not yet published to npm. This stage runs a lightweight
 # plugin host that loads the Sentinel plugin, exposes /health, and will be
 # replaced with `openclaw gateway` once the package is available.
+# All outbound HTTPS traffic routes through executor's CONNECT tunnel proxy
+# via HTTPS_PROXY=http://executor:3141.
 FROM node:22-alpine AS openclaw-gateway
 RUN apk add --no-cache dumb-init
 WORKDIR /app
@@ -57,11 +59,17 @@ COPY --from=build /app/packages/types/dist/ ./packages/types/dist/
 COPY --from=build /app/packages/types/package.json ./packages/types/
 # Node modules for plugin runtime dependencies
 COPY --from=build /app/node_modules ./node_modules/
-RUN mkdir -p /app/data && chown node:node /app/data
+# SENTINEL: Prepare OpenClaw extensions directory for plugin deployment
+RUN mkdir -p /app/data /home/node/.openclaw/extensions/sentinel/dist && \
+    chown -R node:node /app/data /home/node/.openclaw
+# Copy plugin to OpenClaw extensions dir (ready for when openclaw is installed)
+COPY --from=build /app/packages/openclaw-plugin/dist/ /home/node/.openclaw/extensions/sentinel/dist/
 USER node
 EXPOSE 8080
 ENTRYPOINT ["dumb-init", "--"]
 # Lightweight plugin host: health endpoint + plugin readiness check
+# When openclaw is published to npm, replace CMD with:
+#   CMD ["openclaw", "gateway", "--plugin", "/home/node/.openclaw/extensions/sentinel"]
 CMD ["node", "-e", "\
 const http = require('http');\
 const fs = require('fs');\
@@ -69,10 +77,11 @@ const pluginExists = fs.existsSync('/app/plugin/dist/register.js');\
 const manifest = pluginExists ? JSON.parse(fs.readFileSync('/app/plugin/openclaw.plugin.json','utf8')) : null;\
 console.log(`[openclaw-gateway] Plugin: ${manifest?.name ?? 'not found'} v${manifest?.version ?? '?'}`);\
 console.log(`[openclaw-gateway] Executor: ${process.env.SENTINEL_EXECUTOR_URL ?? 'not configured'}`);\
+console.log(`[openclaw-gateway] HTTPS_PROXY: ${process.env.HTTPS_PROXY ?? 'not set'}`);\
 const server = http.createServer((req,res) => {\
   if (req.url === '/health') {\
     res.writeHead(200, {'Content-Type':'application/json'});\
-    res.end(JSON.stringify({status:'ok',plugin:manifest?.name,version:manifest?.version}));\
+    res.end(JSON.stringify({status:'ok',plugin:manifest?.name,version:manifest?.version,proxy:!!process.env.HTTPS_PROXY}));\
   } else {\
     res.writeHead(404); res.end();\
   }\

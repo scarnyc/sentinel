@@ -3,6 +3,7 @@ import { AuditLogger } from "@sentinel/audit";
 import { CredentialVault } from "@sentinel/crypto";
 import { getDefaultConfig, validateConfig } from "@sentinel/policy";
 import type { EgressBinding } from "@sentinel/types";
+import { createConnectHandler } from "./connect-proxy.js";
 import { ensureDockerAuth } from "./docker-auth.js";
 import { applyDockerDefaults } from "./docker-defaults.js";
 import { createApp } from "./server.js";
@@ -154,7 +155,7 @@ const { app } = createApp(
 const port = config.executor.port;
 const host = "0.0.0.0";
 
-serve({ fetch: app.fetch, port, hostname: host }, () => {
+const server = serve({ fetch: app.fetch, port, hostname: host }, () => {
 	console.log(`Sentinel Executor listening on http://${host}:${port}`);
 	console.log(`[sentinel] Confirmation UI: ${confirmBaseUrl}/confirm-ui/<manifestId>`);
 	if (telegramAdapter) {
@@ -166,3 +167,18 @@ serve({ fetch: app.fetch, port, hostname: host }, () => {
 		}
 	}
 });
+
+// SENTINEL: Wave 2.4+ — CONNECT tunnel proxy for Docker-contained agents
+// Enables HTTP CONNECT method on the same port as the executor, allowing agents
+// to use HTTPS_PROXY=http://executor:3141 for outbound HTTPS via tunneled connections.
+if (egressBindings.length > 0) {
+	const connectHandler = createConnectHandler({
+		authToken: config.authToken,
+		egressBindings,
+		auditLogger,
+	});
+	server.on("connect", connectHandler);
+	console.log(
+		`[sentinel] CONNECT proxy enabled for ${egressBindings.flatMap((b) => b.allowedDomains).join(", ")}`,
+	);
+}

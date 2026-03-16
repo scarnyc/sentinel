@@ -83,6 +83,7 @@ services:
 
   # SENTINEL: Wave 2.3 — OpenClaw gateway
   # Runs the OpenClaw plugin with Sentinel integration inside Docker.
+  # All outbound HTTPS routes through executor's CONNECT tunnel proxy.
   # For most deployments, OpenClaw runs on the host and connects to executor:3141.
   openclaw-gateway:
     build:
@@ -99,6 +100,10 @@ services:
       - SENTINEL_FAIL_MODE=closed
       - SENTINEL_DOCKER=true
       - NODE_ENV=production
+      # SENTINEL: CONNECT tunnel proxy — all outbound HTTPS through executor
+      - HTTPS_PROXY=http://executor:3141
+      # Don't proxy internal Docker traffic (executor itself)
+      - NO_PROXY=executor
     mem_limit: 256m
     cpus: "0.5"
     pids_limit: 128
