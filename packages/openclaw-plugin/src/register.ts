@@ -147,13 +147,13 @@ const sentinelPlugin: OpenClawPluginDefinition = {
 		const pluginConfig = api.pluginConfig as Partial<PluginConfig> | undefined;
 		const plugin = createSentinelPlugin(pluginConfig);
 
-		// Install appropriate fetch/proxy interceptor based on deployment mode
+		// Install fetch interceptors based on deployment mode
 		let cleanupInterceptor: (() => void) | undefined;
 		if (pluginConfig?.executorUrl && pluginConfig?.authToken) {
 			if (process.env.SENTINEL_DOCKER) {
-				// Docker mode: primary egress goes through executor's CONNECT proxy
-				// (HTTPS_PROXY env var set in docker-entrypoint.sh). The fetch interceptor
-				// is kept as a fallback for libraries using globalThis.fetch.
+				// Docker mode: fetch interceptor routes egress domains through executor's
+				// /proxy/egress REST endpoint. This enables credential injection, SSRF
+				// protection, and Telegram confirmation interception in getUpdates responses.
 				const egressDomains = (process.env.SENTINEL_EGRESS_DOMAINS ?? "")
 					.split(",")
 					.filter(Boolean);
@@ -164,9 +164,9 @@ const sentinelPlugin: OpenClawPluginDefinition = {
 					agentId: "openclaw-gateway",
 					logger: (msg) => api.logger.info(`[sentinel] ${msg}`),
 				});
-				// Also install Telegram interceptor for confirmation forwarding.
-				// The CONNECT tunnel is opaque, so confirmation callbacks need to be
-				// caught and forwarded to executor when they come through getUpdates.
+				// Telegram interceptor wraps the fetch interceptor (defense-in-depth).
+				// The executor's egress proxy handles primary confirmation interception;
+				// this layer catches any confirms the executor missed.
 				const telegramCleanup = installTelegramInterceptor({
 					executorUrl: pluginConfig.executorUrl,
 					authToken: pluginConfig.authToken,
@@ -327,11 +327,11 @@ export function registerSentinelPlugin(
 	const pluginConfig = config ?? (api.pluginConfig as Partial<PluginConfig> | undefined);
 	const plugin = createSentinelPlugin(pluginConfig);
 
-	// Install appropriate fetch/proxy interceptor based on deployment mode
+	// Install fetch interceptors based on deployment mode
 	let cleanupInterceptor: (() => void) | undefined;
 	if (pluginConfig?.executorUrl && pluginConfig?.authToken) {
 		if (process.env.SENTINEL_DOCKER) {
-			// Docker mode: CONNECT proxy (HTTPS_PROXY) + fetch interceptor fallback
+			// Docker mode: fetch interceptor routes egress through /proxy/egress
 			const egressDomains = (process.env.SENTINEL_EGRESS_DOMAINS ?? "").split(",").filter(Boolean);
 			cleanupInterceptor = installFetchInterceptor({
 				executorUrl: pluginConfig.executorUrl,
