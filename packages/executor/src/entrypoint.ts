@@ -107,7 +107,8 @@ if (vault) {
 			["key"] as const,
 			(cred) => cred.key,
 		);
-		telegramAdapter = new TelegramConfirmAdapter(vault, chatId);
+		const confirmBaseUrl = process.env.SENTINEL_CONFIRM_BASE_URL ?? "http://localhost:3141";
+		telegramAdapter = new TelegramConfirmAdapter(vault, chatId, confirmBaseUrl);
 		console.log("[sentinel] Telegram adapter created from vault credentials");
 	} catch (vaultErr) {
 		console.warn(
@@ -116,7 +117,8 @@ if (vault) {
 		const telegramChatId = process.env.SENTINEL_TELEGRAM_CHAT_ID;
 		if (telegramChatId) {
 			try {
-				telegramAdapter = new TelegramConfirmAdapter(vault, telegramChatId);
+				const fallbackBaseUrl = process.env.SENTINEL_CONFIRM_BASE_URL ?? "http://localhost:3141";
+				telegramAdapter = new TelegramConfirmAdapter(vault, telegramChatId, fallbackBaseUrl);
 				console.log("[sentinel] Telegram adapter created with env var chat ID");
 			} catch (err) {
 				console.error(
@@ -132,7 +134,9 @@ if (vault) {
 	);
 }
 
-const { app, resolveConfirmation } = createApp(
+const confirmBaseUrl = process.env.SENTINEL_CONFIRM_BASE_URL ?? "http://localhost:3141";
+
+const { app } = createApp(
 	config,
 	auditLogger,
 	registry,
@@ -141,6 +145,7 @@ const { app, resolveConfirmation } = createApp(
 	undefined,
 	egressBindings,
 	telegramAdapter,
+	confirmBaseUrl,
 );
 
 const port = config.executor.port;
@@ -148,6 +153,7 @@ const host = "0.0.0.0";
 
 serve({ fetch: app.fetch, port, hostname: host }, () => {
 	console.log(`Sentinel Executor listening on http://${host}:${port}`);
+	console.log(`[sentinel] Confirmation UI: ${confirmBaseUrl}/confirm-ui/<manifestId>`);
 	if (telegramAdapter) {
 		const hasTelegramBinding = egressBindings.some((b) =>
 			b.allowedDomains.some((d) => d === "api.telegram.org"),
@@ -155,9 +161,5 @@ serve({ fetch: app.fetch, port, hostname: host }, () => {
 		if (hasTelegramBinding) {
 			console.log("[sentinel] Telegram egress proxy interception active (Docker mode)");
 		}
-		// SENTINEL: Always start fallback polling — handles hybrid deployment
-		// (host OpenClaw + Docker executor) where egress interception can't fire.
-		// Both paths use the same resolveConfirmation — idempotent (Map.delete on first, false on second).
-		telegramAdapter.startFallbackPolling(resolveConfirmation);
 	}
 });

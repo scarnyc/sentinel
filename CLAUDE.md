@@ -14,11 +14,11 @@ Sentinel is a security-hardened agent runtime with process isolation between the
 Optional follow-up (separate commit) | The config only has sentinel-openai provider routing through the proxy. There's no sentinel-anthropic or sentinel-gemini provider. The Anthropic auth profile uses direct `mode: "token"` — which means Anthropic API calls would bypass Sentinel's proxy. This may be intentional if you're only using GPT-5.4 for now, but worth noting for later.
 5. Update TIER_CONSTRAINTS strings in setup-openclaw.ts to match the new conversational tone (currently they read like policy docs too)
 6. Update the inline fallback template at setup-openclaw.ts:165-171 (only fires if template file missing)
-7. Update ExecutorClient to add confirmOnly() method for /confirm-only endpoint
-8. Wire register.ts into openclaw-plugin index.ts exports
+7. ~~Update ExecutorClient to add confirmOnly() method~~ (done — Wave 2.4)
+8. ~~Wire register.ts into openclaw-plugin index.ts exports~~ (done — Wave 2.4)
 9. Set up sentinel memory plugin
 10. Fix set-up and create guide to make it more intuitive and user friendly
-11. use ag-ui protocol for all UI approve / rejects | Approach 5: Hybrid — Single Poller + ag-ui Events:
+11. use ag-ui protocol for all UI approve / rejects (BLOCKED: grammY uses undici dispatcher, not globalThis.fetch — CONNECT proxy provides transport but tunnel is opaque, can't intercept confirmation callbacks; needs executor-as-sole-poller + message forwarding, or ag-ui, or OpenClaw upstream apiRoot/callback_query hook) | Approach 5: Hybrid — Single Poller + ag-ui Events:
   - Executor owns the single Telegram poll loop (existing)
   - Exposes ag-ui SSE endpoint for real-time event streaming
   - Telegram becomes one "renderer" of ag-ui events alongside web/TUI
@@ -33,6 +33,7 @@ Optional follow-up (separate commit) | The config only has sentinel-openai provi
 17. Plugin hot-reload — currently requires gateway restart
 18. secure telegram channels upon server wind-down
 19. Fix vault password masking upon `sentinel start`
+
 
 **Phase 1 completed** (PR #8, 490 tests). **Memory store** (PR #9, 542 tests). **Phase 2** decomposes into 4 waves.
 
@@ -60,7 +61,7 @@ Optional follow-up (separate commit) | The config only has sentinel-openai provi
 | `pnpm format` | `biome format --write .` |
 | `pnpm format:check` | `biome format .` |
 | `pnpm --filter @sentinel/<pkg> test` | Test a single package |
-| `sentinel start` | Build, start Docker, wait for healthy (executor only) |
+| `sentinel start` | Build, start Docker, wait for healthy (executor + gateway) |
 | `sentinel start executor agent` | Start specific services |
 | `sentinel stop` | Stop all Docker services |
 | `docker compose up` | Start executor + agent in Docker (manual) |
@@ -357,6 +358,10 @@ Defined in `.claude/settings.json` — includes test, lint, and typecheck comman
 - **Egress proxy HTTPS-only** — `/proxy/egress` rejects HTTP destinations to prevent plaintext credential transmission
 - **Placeholder cross-service rejection** — `SENTINEL_PLACEHOLDER_GITHUB_TOKEN` in a request to `api.telegram.org` (bound to service "telegram") is rejected, even if the "github" service exists in vault
 - **`openclaw gateway` in Docker** — runs on `sentinel-internal` only; all outbound traffic goes through executor's `/proxy/egress`; `npm install -g openclaw@latest` in Dockerfile stage
+- **grammY undici dispatcher** — grammY/OpenClaw use undici's internal HTTP client, not `globalThis.fetch`; HTTPS_PROXY is the only transport mechanism; fetch monkey-patching doesn't work for bundled libraries
+- **CONNECT tunnel opacity** — HTTP CONNECT provides domain-level access control but can't inspect request/response content (credential filtering, confirmation interception impossible); `setTimeout(0)` required after tunnel connect for long-polling
+- **OpenClaw plugin hooks** — only `before_tool_call`, `tool_result_persist`, `message_sending`, `gateway_stop` are supported; `callback_query`/`update_received` hooks do NOT exist
+- **OpenClaw pairing in Docker** — `openclaw pairing approve` must run inside the gateway container: `docker compose exec openclaw-gateway openclaw pairing approve telegram <CODE>`
 
 
 ## Build Progress
@@ -392,7 +397,7 @@ Defined in `.claude/settings.json` — includes test, lint, and typecheck comman
 - [ ] Claude Code integrations and heartbeats for coding tasks via notes
 - [ ] Promptfoo for evals and red teaming (pen testing, adversarial attacks): https://github.com/promptfoo/promptfoo#readme
 - [ ] Posthog for app analytics: https://posthog.com/
-- [ ] Moltworkers CF deployment: (https://blog.cloudflare.com/moltworker-self-hosted-ai-agent/) | (https://github.com/cloudflare/moltworker)
+- [ ] Moltworkers CF deployment: (https://blog.cloudflare.com/moltworker-self-hosted-ai-agent/) | (https://github.com/cloudflare/moltworker) **Note for CF** for later, local network reachability for POC — SENTINEL_CONFIRM_BASE_URL set to Mac Mini LAN IP. Production: Cloudflare Tunnel or Telegram WebApp
 - [ ] Paperclip: Open-source orchestration for zero-human companies | https://github.com/paperclipai/paperclip
 
 ### References
@@ -408,7 +413,7 @@ Defined in `.claude/settings.json` — includes test, lint, and typecheck comman
 
 #### Notes from Mar. 15
 
-★ Insight from https://openai.com/index/equip-responses-api-computer-environment/───────────────────────────────
+★ Insight from https://openai.com/index/equip-responses-api-computer-environment/
 OpenAI independently validated Sentinel's core architecture. Their "Equip" system (Responses API + Shell Tool + Container Runtime) is structurally the same two-process model we built: model proposes → platform executes → secrets never visible to model. Their "auth-translation sidecar" is functionally equivalent to our executor's useCredential() vault injection. Sentinel is actually ahead in several areas (encrypted vault vs env vars, Merkle audit chain vs simple logging, HITL confirmation vs none, zero-outbound-by-default vs allowlist).
 
 The real gap isn't architectural — it's operational. OpenClaw currently calls /classify for policy decisions but executes auto_approve tools itself, bypassing Sentinel's audit, credential filtering, SSRF protection, and PII scrubbing. OpenAI routes ALL commands through the platform — no bypass path exists. We need to match that.

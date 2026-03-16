@@ -14,6 +14,8 @@ import { z } from "zod";
 import { createAuthMiddleware } from "./auth-middleware.js";
 import { type ClassifyGuards, handleClassify } from "./classify-endpoint.js";
 import { handleConfirmOnly } from "./confirm-endpoint.js";
+import { createConfirmUiHandler } from "./confirm-ui.js";
+import { type ConfirmationEvent, createConfirmationStream } from "./confirmation-stream.js";
 import type { DelegationQueue } from "./delegate-handler.js";
 import { createEgressProxyHandler, type TelegramInterceptor } from "./egress-proxy.js";
 import { handleFilterOutput } from "./filter-endpoint.js";
@@ -61,16 +63,35 @@ export function createApp(
 	delegationQueue?: DelegationQueue,
 	egressBindings?: EgressBinding[],
 	telegramAdapter?: TelegramConfirmAdapter,
-): { app: Hono; resolveConfirmation: (manifestId: string, approved: boolean) => boolean } {
+	confirmBaseUrl?: string,
+): {
+	app: Hono;
+	resolveConfirmation: (manifestId: string, approved: boolean) => boolean;
+	emitConfirmation: (event: ConfirmationEvent) => void;
+} {
 	const app = new Hono();
 	const pendingConfirmations = new Map<string, PendingConfirmation>();
+	const confirmStream = createConfirmationStream();
+	const baseUrl = confirmBaseUrl ?? "http://localhost:3141";
 
-	// SENTINEL: Shared confirmation resolver — used by HTTP endpoint, egress proxy, and fallback polling
+	// SENTINEL: Shared confirmation resolver — used by HTTP endpoint, egress proxy, and web UI
 	function resolveConfirmation(manifestId: string, approved: boolean): boolean {
 		const pending = pendingConfirmations.get(manifestId);
 		if (!pending) return false;
 		pendingConfirmations.delete(manifestId);
 		pending.resolve(approved);
+
+		// SENTINEL: Emit ag-ui SSE event for connected clients
+		confirmStream.emit({
+			type: "custom",
+			name: "confirmation_resolved",
+			value: {
+				manifestId,
+				decision: approved ? "approved" : "denied",
+				resolvedBy: "web",
+			},
+		});
+
 		return true;
 	}
 
@@ -88,6 +109,15 @@ export function createApp(
 			const timeout = setTimeout(() => {
 				pendingConfirmations.delete(manifest.id);
 				resolve(false); // auto-deny
+				confirmStream.emit({
+					type: "custom",
+					name: "confirmation_resolved",
+					value: {
+						manifestId: manifest.id,
+						decision: "timeout",
+						resolvedBy: "timeout",
+					},
+				});
 				console.warn(
 					`[sentinel] Confirmation timeout for ${manifest.id} (${manifest.tool}) — auto-denied after ${CONFIRMATION_TIMEOUT_MS / 1000}s`,
 				);
@@ -99,6 +129,21 @@ export function createApp(
 				resolve: (approved: boolean) => {
 					clearTimeout(timeout);
 					resolve(approved);
+				},
+			});
+
+			// SENTINEL: Emit ag-ui SSE event for connected clients
+			confirmStream.emit({
+				type: "custom",
+				name: "confirmation_requested",
+				value: {
+					manifestId: manifest.id,
+					tool: manifest.tool,
+					category: decision.category,
+					reason: decision.reason,
+					parameters: manifest.parameters,
+					expiresAt: new Date(Date.now() + CONFIRMATION_TIMEOUT_MS).toISOString(),
+					confirmUrl: `${baseUrl}/confirm-ui/${manifest.id}`,
 				},
 			});
 
@@ -204,6 +249,12 @@ export function createApp(
 	app.get("/tools", (c) => {
 		return c.json(registry.list());
 	});
+
+	// SENTINEL: ag-ui SSE confirmation event stream
+	app.get("/confirmations/stream", confirmStream.handler);
+
+	// SENTINEL: Web confirmation UI — user clicks link from Telegram/Slack to approve/deny
+	app.get("/confirm-ui/:manifestId", createConfirmUiHandler(pendingConfirmations, baseUrl));
 
 	app.get("/pending-confirmations", (c) => {
 		const pending = Array.from(pendingConfirmations.entries()).map(([id, p]) => ({
@@ -371,5 +422,5 @@ export function createApp(
 		return c.json({ status: parsed.data.approved ? "approved" : "denied" });
 	});
 
-	return { app, resolveConfirmation };
+	return { app, resolveConfirmation, emitConfirmation: confirmStream.emit };
 }
