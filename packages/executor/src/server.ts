@@ -14,6 +14,7 @@ import { z } from "zod";
 import { createAuthMiddleware } from "./auth-middleware.js";
 import { type ClassifyGuards, handleClassify } from "./classify-endpoint.js";
 import { handleConfirmOnly } from "./confirm-endpoint.js";
+import { generateConfirmToken, verifyConfirmToken } from "./confirm-token.js";
 import { createConfirmUiHandler } from "./confirm-ui.js";
 import { type ConfirmationEvent, createConfirmationStream } from "./confirmation-stream.js";
 import type { DelegationQueue } from "./delegate-handler.js";
@@ -132,6 +133,12 @@ export function createApp(
 				},
 			});
 
+			// SENTINEL: Generate HMAC-signed URL token for phone browser access (no bearer token needed)
+			const tokenExpiresAt = Date.now() + CONFIRMATION_TIMEOUT_MS;
+			const urlToken = generateConfirmToken(manifest.id, tokenExpiresAt, confirmTokenSecret);
+			const tokenQuery = `?token=${urlToken}&expires=${tokenExpiresAt}`;
+			const confirmUrl = `${baseUrl}/confirm-ui/${manifest.id}${tokenQuery}`;
+
 			// SENTINEL: Emit ag-ui SSE event for connected clients
 			confirmStream.emit({
 				type: "custom",
@@ -142,8 +149,8 @@ export function createApp(
 					category: decision.category,
 					reason: decision.reason,
 					parameters: manifest.parameters,
-					expiresAt: new Date(Date.now() + CONFIRMATION_TIMEOUT_MS).toISOString(),
-					confirmUrl: `${baseUrl}/confirm-ui/${manifest.id}`,
+					expiresAt: new Date(tokenExpiresAt).toISOString(),
+					confirmUrl,
 				},
 			});
 
@@ -156,6 +163,7 @@ export function createApp(
 						parameters: manifest.parameters,
 						category: decision.category,
 						reason: decision.reason,
+						confirmUrl,
 					})
 					.catch((err) => {
 						console.error(
@@ -235,10 +243,35 @@ export function createApp(
 			);
 		}
 	}
+	// SENTINEL: Derive confirm token secret from HMAC secret (or generate standalone 32-byte key)
+	const confirmTokenSecret = hmacSecret ?? Buffer.from(crypto.getRandomValues(new Uint8Array(32)));
+
 	app.use("*", async (c, next) => {
 		if (c.req.path === "/health") {
 			return next();
 		}
+
+		// SENTINEL: Allow HMAC-signed URL token auth for confirmation web routes
+		// These are accessed from a phone browser — no bearer token available
+		const confirmUiMatch = c.req.path.match(/^\/confirm-ui\/([^/]+)$/);
+		const confirmPostMatch = c.req.path.match(/^\/confirm\/([^/]+)$/);
+		const match = confirmUiMatch ?? confirmPostMatch;
+
+		if (match) {
+			const manifestId = match[1];
+			const url = new URL(c.req.url);
+			const token = url.searchParams.get("token");
+			const expires = url.searchParams.get("expires");
+
+			if (token && expires) {
+				const expiresAt = Number.parseInt(expires, 10);
+				if (verifyConfirmToken(manifestId, token, expiresAt, confirmTokenSecret)) {
+					return next(); // Valid HMAC token — bypass bearer auth
+				}
+				return c.json({ error: "Invalid or expired confirmation token" }, 403);
+			}
+		}
+
 		return authMiddleware(c, next);
 	});
 

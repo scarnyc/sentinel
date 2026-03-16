@@ -51,7 +51,8 @@ async function resolve(approved) {
 	const result = document.getElementById('result');
 	actions.textContent = 'Processing...';
 	try {
-		const res = await fetch('${confirmUrl}', {
+		const tokenParams = window.location.search;
+		const res = await fetch('${confirmUrl}' + tokenParams, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ approved })

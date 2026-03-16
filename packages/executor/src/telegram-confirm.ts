@@ -10,6 +10,7 @@ export interface TelegramConfirmRequest {
 	parameters: Record<string, unknown>;
 	category: string;
 	reason: string;
+	confirmUrl?: string;
 }
 
 export class TelegramConfirmAdapter {
@@ -124,9 +125,8 @@ export class TelegramConfirmAdapter {
 		}
 
 		lines.push("");
-		lines.push(
-			escapeMarkdownV2(`Review & approve: ${this.confirmBaseUrl}/confirm-ui/${req.manifestId}`),
-		);
+		const linkUrl = req.confirmUrl ?? `${this.confirmBaseUrl}/confirm-ui/${req.manifestId}`;
+		lines.push(escapeMarkdownV2(`Review & approve: ${linkUrl}`));
 		lines.push("━━━━━━━━━━━━━━━━━━━━━");
 		return lines.join("\n");
 	}
