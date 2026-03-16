@@ -595,6 +595,18 @@ describe("classify", () => {
 		it("read_file treated as read (read token)", () => {
 			expect(inferCategoryFromName("read_config")).toBe("read");
 		});
+
+		it("camelCase names fall through to write (no camelCase boundary support)", () => {
+			// Known limitation: regex only matches at _ and __ boundaries.
+			// CamelCase MCP tools (GitHub, Slack) all default to write (fail-closed).
+			expect(inferCategoryFromName("getUser")).toBe("write");
+			expect(inferCategoryFromName("listPullRequests")).toBe("write");
+			expect(inferCategoryFromName("deleteRecord")).toBe("write");
+		});
+
+		it("empty string defaults to write", () => {
+			expect(inferCategoryFromName("")).toBe("write");
+		});
 	});
 
 	describe("GWS classification rules", () => {

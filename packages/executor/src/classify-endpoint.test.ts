@@ -156,6 +156,30 @@ describe("POST /classify", () => {
 		expect(entries[0].parameters_summary).toContain("[REDACTED]");
 	});
 
+	it("truncates parameters_summary for large params", async () => {
+		await postClassify(app, {
+			tool: "read_file",
+			params: { path: "/tmp/test.txt", data: "x".repeat(1000) },
+			agentId: "test-agent",
+			sessionId: "test-session",
+		});
+		const entries = auditLogger.getRecent(1);
+		expect(entries[0].parameters_summary.length).toBeLessThanOrEqual(500);
+	});
+
+	it("classifies unknown MCP tool via name heuristic", async () => {
+		const res = await postClassify(app, {
+			tool: "mcp__slack__list_channels",
+			params: {},
+			agentId: "test-agent",
+			sessionId: "test-session",
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as ClassifyResponse;
+		expect(body.decision).toBe("auto_approve");
+		expect(body.category).toBe("read");
+	});
+
 	it("returns correct manifestId in response", async () => {
 		const res = await postClassify(app, {
 			tool: "read_file",
