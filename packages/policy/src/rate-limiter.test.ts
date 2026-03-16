@@ -259,3 +259,66 @@ describe("RateLimiter with SQLite persistence", () => {
 		db.close();
 	});
 });
+
+describe("RateLimiter stress test", () => {
+	it("enforces rate limit under rapid-fire load (100 requests, rate=60/min)", () => {
+		// Simulates real production load: 100 requests in quick succession
+		// with rate=60 per 60000ms (1 per second effective)
+		const limiter = new RateLimiter({ rate: 60, period: 60_000 });
+
+		let allowed = 0;
+		let rejected = 0;
+		for (let i = 0; i < 100; i++) {
+			const result = limiter.check("stress-agent");
+			if (result.allowed) allowed++;
+			else rejected++;
+		}
+
+		// Exactly 60 should pass (burst capacity), 40 rejected
+		expect(allowed).toBe(60);
+		expect(rejected).toBe(40);
+	});
+
+	it("per-agent isolation: saturating one agent does not affect another", () => {
+		const limiter = new RateLimiter({ rate: 10, period: 5000 });
+
+		// Saturate agent-A with 20 requests
+		for (let i = 0; i < 20; i++) {
+			limiter.check("agent-A");
+		}
+
+		// agent-B should be completely unaffected
+		for (let i = 0; i < 10; i++) {
+			expect(limiter.check("agent-B").allowed).toBe(true);
+		}
+		// agent-B's 11th should be rejected (its own limit)
+		expect(limiter.check("agent-B").allowed).toBe(false);
+	});
+
+	it("rejected requests include positive retryAfter", () => {
+		const limiter = new RateLimiter({ rate: 5, period: 1000 });
+
+		// Exhaust rate
+		for (let i = 0; i < 5; i++) {
+			limiter.check("agent-retry");
+		}
+
+		// All subsequent requests should have positive retryAfter
+		for (let i = 0; i < 10; i++) {
+			const result = limiter.check("agent-retry");
+			expect(result.allowed).toBe(false);
+			expect(result.retryAfter).toBeGreaterThan(0);
+		}
+	});
+
+	it("handles many concurrent agents without degradation", () => {
+		const limiter = new RateLimiter({ rate: 5, period: 1000 });
+
+		// 200 unique agents each making 3 requests (well within limit)
+		for (let i = 0; i < 200; i++) {
+			for (let j = 0; j < 3; j++) {
+				expect(limiter.check(`concurrent-agent-${i}`).allowed).toBe(true);
+			}
+		}
+	});
+});

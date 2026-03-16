@@ -1,8 +1,22 @@
-import type { AuditLogger } from "@sentinel/audit";
+import { type AuditLogger, redactCredentials } from "@sentinel/audit";
 import { classify, type LoopGuard, type RateLimiter } from "@sentinel/policy";
 import type { ClassifyResponse, SentinelConfig } from "@sentinel/types";
 import { ActionManifestSchema, ClassifyRequestSchema } from "@sentinel/types";
 import type { Context } from "hono";
+
+function summarizeParams(params: Record<string, unknown>): string {
+	// Redact BEFORE truncating — truncation can split credential patterns,
+	// causing partial credentials to survive regex matching (Invariant #1)
+	let json: string;
+	try {
+		json = JSON.stringify(params);
+	} catch {
+		// BigInt, circular refs, or other non-serializable values
+		return "[unserializable]";
+	}
+	const redacted = redactCredentials(json);
+	return redacted.length > 500 ? `${redacted.substring(0, 497)}...` : redacted;
+}
 
 export interface ClassifyGuards {
 	rateLimiter?: RateLimiter;
@@ -44,7 +58,7 @@ export async function handleClassify(
 				tool,
 				category: "dangerous",
 				decision: "block",
-				parameters_summary: "",
+				parameters_summary: summarizeParams(params),
 				result: "blocked_by_rate_limit",
 				duration_ms: 0,
 				source,
@@ -74,7 +88,7 @@ export async function handleClassify(
 				tool,
 				category: "dangerous",
 				decision: "block",
-				parameters_summary: "",
+				parameters_summary: summarizeParams(params),
 				result: "blocked_by_loop_guard",
 				duration_ms: 0,
 				source,
@@ -104,7 +118,7 @@ export async function handleClassify(
 		tool,
 		category: decision.category,
 		decision: decision.action,
-		parameters_summary: "",
+		parameters_summary: summarizeParams(params),
 		result: decision.action === "block" ? "blocked_by_policy" : "success",
 		duration_ms: 0,
 		source,

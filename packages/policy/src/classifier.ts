@@ -14,6 +14,31 @@ import {
 } from "@sentinel/types";
 import { classifyBashCommand } from "./bash-parser.js";
 
+const READ_NAME_TOKENS =
+	/(?:^|[-_]|__)(search|read|list|get|view|fetch|find|describe|show|query|lookup)(?:[-_]|__|$)/i;
+const WRITE_NAME_TOKENS =
+	/(?:^|[-_]|__)(write|create|delete|remove|update|send|post|put|patch|drop|destroy|execute|run|invoke)(?:[-_]|__|$)/i;
+
+/**
+ * Infer action category from tool name when no explicit classification exists.
+ * Write-indicating tokens take precedence (fail-closed). If neither pattern matches,
+ * defaults to "write" for safety.
+ */
+export function inferCategoryFromName(toolName: string): ActionCategory {
+	// Extract the tool portion after the last __ (MCP tools: server__method)
+	const segments = toolName.split("__");
+	const namePart = segments[segments.length - 1];
+
+	// Write tokens win over read tokens (fail-closed).
+	// Also scan ALL segments — a write token anywhere escalates to write.
+	for (const segment of segments) {
+		if (WRITE_NAME_TOKENS.test(segment)) return "write";
+	}
+	if (READ_NAME_TOKENS.test(namePart)) return "read";
+
+	return "write";
+}
+
 function findClassification(
 	tool: string,
 	classifications: ToolClassification[],
@@ -156,9 +181,6 @@ export function classify(manifest: ActionManifest, config: SentinelConfig): Poli
 		return categoryToDecision(category, config.autoApproveReadOps);
 	}
 
-	if (tool.includes("__")) {
-		return categoryToDecision("write", config.autoApproveReadOps);
-	}
-
-	return categoryToDecision("write", config.autoApproveReadOps);
+	// No explicit classification — infer from tool name
+	return categoryToDecision(inferCategoryFromName(tool), config.autoApproveReadOps);
 }

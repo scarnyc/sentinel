@@ -1,6 +1,6 @@
 import type { ActionManifest, SentinelConfig } from "@sentinel/types";
 import { describe, expect, it } from "vitest";
-import { classify } from "./classifier.js";
+import { classify, inferCategoryFromName } from "./classifier.js";
 import { getDefaultConfig } from "./rules.js";
 
 function makeManifest(tool: string, parameters: Record<string, unknown> = {}): ActionManifest {
@@ -70,15 +70,21 @@ describe("classify", () => {
 	});
 
 	describe("MCP tools", () => {
-		it("unknown MCP tool -> write, confirm", () => {
+		it("MCP tool with write-indicating name -> write, confirm", () => {
 			const result = classify(makeManifest("mcp__slack__send_message", { text: "hello" }), config);
 			expect(result.category).toBe("write");
 			expect(result.action).toBe("confirm");
 		});
+
+		it("MCP tool with read-indicating name -> read, auto_approve", () => {
+			const result = classify(makeManifest("mcp__slack__list_channels"), config);
+			expect(result.category).toBe("read");
+			expect(result.action).toBe("auto_approve");
+		});
 	});
 
 	describe("unknown tools", () => {
-		it("unknown tool -> write, confirm", () => {
+		it("unknown tool with no name signal -> write, confirm", () => {
 			const result = classify(makeManifest("some_unknown_tool"), config);
 			expect(result.category).toBe("write");
 			expect(result.action).toBe("confirm");
@@ -537,6 +543,82 @@ describe("classify", () => {
 			const result = classify(manifest, customConfig);
 			// Invalid regex should fail-safe: override applies (dangerous, not read)
 			expect(result.category).toBe("dangerous");
+		});
+	});
+
+	describe("inferCategoryFromName heuristic", () => {
+		it("read tokens: search, list, get, view, find, describe, show, query, lookup", () => {
+			expect(inferCategoryFromName("memory_search")).toBe("read");
+			expect(inferCategoryFromName("list_users")).toBe("read");
+			expect(inferCategoryFromName("get_profile")).toBe("read");
+			expect(inferCategoryFromName("view_dashboard")).toBe("read");
+			expect(inferCategoryFromName("find_records")).toBe("read");
+			expect(inferCategoryFromName("describe_table")).toBe("read");
+			expect(inferCategoryFromName("show_status")).toBe("read");
+			expect(inferCategoryFromName("query_logs")).toBe("read");
+			expect(inferCategoryFromName("lookup_user")).toBe("read");
+		});
+
+		it("write tokens take precedence over read tokens (fail-closed)", () => {
+			expect(inferCategoryFromName("delete_search_index")).toBe("write");
+			expect(inferCategoryFromName("create_view")).toBe("write");
+			expect(inferCategoryFromName("update_list")).toBe("write");
+		});
+
+		it("write tokens: create, delete, send, update, execute, etc.", () => {
+			expect(inferCategoryFromName("create_document")).toBe("write");
+			expect(inferCategoryFromName("delete_file")).toBe("write");
+			expect(inferCategoryFromName("send_email")).toBe("write");
+			expect(inferCategoryFromName("execute_query")).toBe("write");
+			expect(inferCategoryFromName("run_script")).toBe("write");
+		});
+
+		it("no signal defaults to write (fail-closed)", () => {
+			expect(inferCategoryFromName("some_random_tool")).toBe("write");
+			expect(inferCategoryFromName("foobar")).toBe("write");
+		});
+
+		it("extracts tool name from MCP format (server__method)", () => {
+			expect(inferCategoryFromName("mcp__db__search_records")).toBe("read");
+			expect(inferCategoryFromName("mcp__api__delete_user")).toBe("write");
+		});
+
+		it("write token in any segment escalates to write (all-segment scan)", () => {
+			// Server name contains write token — escalate even if method is read-like
+			expect(inferCategoryFromName("mcp__delete_server__list_items")).toBe("write");
+			expect(inferCategoryFromName("mcp__execute_api__get_status")).toBe("write");
+		});
+
+		it("is case-insensitive", () => {
+			expect(inferCategoryFromName("LIST_USERS")).toBe("read");
+			expect(inferCategoryFromName("Search_Items")).toBe("read");
+		});
+
+		it("fetch is read (HTTP GET semantics)", () => {
+			expect(inferCategoryFromName("fetch_data")).toBe("read");
+		});
+
+		it("read_file treated as read (read token)", () => {
+			expect(inferCategoryFromName("read_config")).toBe("read");
+		});
+
+		it("hyphenated tool names recognized", () => {
+			expect(inferCategoryFromName("search-records")).toBe("read");
+			expect(inferCategoryFromName("list-channels")).toBe("read");
+			expect(inferCategoryFromName("delete-user")).toBe("write");
+			expect(inferCategoryFromName("send-message")).toBe("write");
+		});
+
+		it("camelCase names fall through to write (no camelCase boundary support)", () => {
+			// Known limitation: regex only matches at _, __, and - boundaries.
+			// CamelCase MCP tools (GitHub, Slack) all default to write (fail-closed).
+			expect(inferCategoryFromName("getUser")).toBe("write");
+			expect(inferCategoryFromName("listPullRequests")).toBe("write");
+			expect(inferCategoryFromName("deleteRecord")).toBe("write");
+		});
+
+		it("empty string defaults to write", () => {
+			expect(inferCategoryFromName("")).toBe("write");
 		});
 	});
 

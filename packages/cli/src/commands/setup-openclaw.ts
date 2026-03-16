@@ -12,25 +12,25 @@ const PLUGIN_DIR = join(OPENCLAW_CONFIG_DIR, "extensions", "sentinel");
 
 const TIER_CONSTRAINTS: Record<string, string> = {
 	Normal: [
-		"Standard operating constraints apply.",
-		"- Read operations auto-approved when configured",
-		"- Write operations require confirmation",
-		"- Rate limit: 60 requests/minute",
+		"You're running under Sentinel's standard security model.",
+		"Read operations (search, list, get) are auto-approved when configured.",
+		"Write operations need human confirmation before they run.",
+		"You can make up to 60 requests per minute.",
 	].join("\n"),
 	High: [
-		"Elevated security constraints apply.",
-		"- ALL operations require confirmation (no auto-approve)",
-		"- Rate limit: 30 requests/minute",
-		"- Output scanning in enforce mode",
-		"- No delegate.code unless explicitly authorized",
+		"You're running under Sentinel's elevated security model.",
+		"Every operation needs human confirmation — nothing runs automatically.",
+		"Your rate limit is 30 requests per minute.",
+		"All output is actively scanned for sensitive content.",
+		"You cannot use delegate.code unless explicitly authorized.",
 	].join("\n"),
 	Critical: [
-		"Maximum security constraints apply.",
-		"- ALL operations require confirmation with mandatory wait",
-		"- Rate limit: 10 requests/minute",
-		"- Output scanning in enforce mode with strict PII blocking",
-		"- delegate.code disabled",
-		"- Network egress blocked",
+		"You're running under Sentinel's maximum security model.",
+		"Every operation needs human confirmation with a mandatory review period.",
+		"Your rate limit is 10 requests per minute.",
+		"All output is scanned with strict PII blocking enabled.",
+		"Delegation (delegate.code) is disabled entirely.",
+		"You have no direct network access.",
 	].join("\n"),
 };
 
@@ -188,13 +188,25 @@ export async function setupOpenclawCommand(dataDir: string): Promise<void> {
 		template = existsSync(templatePath)
 			? readFileSync(templatePath, "utf-8")
 			: readFileSync(fallbackTemplatePath, "utf-8");
-	} catch {
-		// Inline minimal template if file not found
+	} catch (err) {
+		console.warn(
+			`[setup-openclaw] SOUL.md template not found, using inline fallback: ${err instanceof Error ? err.message : String(err)}`,
+		);
 		template = [
 			"# Identity",
-			"You are a Sentinel-managed agent. Sensitivity tier: {{TIER}}.",
+			"",
+			"You are a Sentinel-managed agent running at the **{{TIER}}** sensitivity tier.",
+			"All your tool calls are routed through Sentinel's executor for classification,",
+			"credential injection, and audit logging. You never see raw credentials.",
+			"",
+			"## Security Constraints",
 			"",
 			"{{TIER_CONSTRAINTS}}",
+			"",
+			"## Tool Usage",
+			"",
+			"When a tool call requires confirmation, wait for human approval before proceeding.",
+			"Do not attempt to bypass or retry rejected tool calls.",
 		].join("\n");
 	}
 
@@ -245,14 +257,22 @@ export async function setupOpenclawCommand(dataDir: string): Promise<void> {
 	spin.start("Updating Sentinel configuration...");
 	const sentinelConfigPath = resolve(dataDir, "sentinel.json");
 	if (existsSync(sentinelConfigPath)) {
-		const sentinelRaw = readFileSync(sentinelConfigPath, "utf-8");
-		const sentinelConfig = JSON.parse(sentinelRaw) as Record<string, unknown>;
-		sentinelConfig.openclawPlugin = {
-			enabled: true,
-			executorUrl,
-			tier,
-		};
-		await writeFile(sentinelConfigPath, JSON.stringify(sentinelConfig, null, "\t"), "utf-8");
+		try {
+			const sentinelRaw = readFileSync(sentinelConfigPath, "utf-8");
+			const sentinelConfig = JSON.parse(sentinelRaw) as Record<string, unknown>;
+			sentinelConfig.openclawPlugin = {
+				enabled: true,
+				executorUrl,
+				tier,
+			};
+			await writeFile(sentinelConfigPath, JSON.stringify(sentinelConfig, null, "\t"), "utf-8");
+		} catch (err) {
+			console.warn(
+				`[setup-openclaw] Failed to update sentinel.json: ${err instanceof Error ? err.message : String(err)}`,
+			);
+		}
+	} else {
+		console.warn(`[setup-openclaw] sentinel.json not found at ${sentinelConfigPath} — skipping Sentinel config update`);
 	}
 	spin.stop("Sentinel configuration updated");
 

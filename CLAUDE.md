@@ -12,11 +12,11 @@ Sentinel is a security-hardened agent runtime with process isolation between the
 **Wave spec**: `docs/superpowers/specs/2026-03-10-phase-2-waves-design.md`
 4. Set Anthropic and Gemini API keys to work with Plano
 Optional follow-up (separate commit) | The config only has sentinel-openai provider routing through the proxy. There's no sentinel-anthropic or sentinel-gemini provider. The Anthropic auth profile uses direct `mode: "token"` — which means Anthropic API calls would bypass Sentinel's proxy. This may be intentional if you're only using GPT-5.4 for now, but worth noting for later. Investigate Anthropic API failures — The 34% failure rate and malformed /anthropic/v1/messages path suggest a ANTHROPIC_BASE_URL misconfiguration. Fix the URL double-prefix issue.
-5. Update TIER_CONSTRAINTS strings in setup-openclaw.ts to match the new conversational tone (currently they read like policy docs too)
-6. Update the inline fallback template at setup-openclaw.ts:165-171 (only fires if template file missing)
+5. ~~Update TIER_CONSTRAINTS strings in setup-openclaw.ts~~ (done — PR #34)
+6. ~~Update inline fallback template in setup-openclaw.ts~~ (done — PR #34)
 7. Set up sentinel memory plugin. Add memory operation test scenarios — Invariants 4 (size caps) and 5 (no credentials in memory) are completely unexercised in production. Generate test workloads that exercise memory writes. OpenClaw memory isolation — separate memory systems (Phase 3)
 8. Fix set-up and create guide to make it more intuitive and user friendly
-9. Right now openclaw classifies everything as a write command. Add a name-based heuristic (or probabalistic) in the classifier — tools with search, read, list, get, view in the name default to "read" instead of "write"
+9. ~~Name-based read heuristic in classifier~~ (done — PR #34, `inferCategoryFromName` with fail-closed write precedence)
 10. Execution delegation via upstream hook change — propose `result` field on `BeforeToolCallResult` to OpenClaw (spec: `docs/superpowers/specs/2026-03-16-execution-delegation-design.md`). When available: Sentinel executes tools, filters results, returns sanitized output via hook. Interim: 6-layer advisory defense (classify + confirm + output redact + message redact + network isolation + credential isolation)
 11. Update SOUL.md and AGENTS.md so that openclaw knows what sentinel is aware of it. Keep the level of detail 'as needed' so it can't modify sentinel settings
 12. Webhook support in Docker — requires inbound connections incompatible with `internal: true` (cloud deployment scope)
@@ -24,8 +24,8 @@ Optional follow-up (separate commit) | The config only has sentinel-openai provi
 14. secure telegram channels upon server wind-down
 15. Fix vault password masking upon `sentinel start`
 16. Custom undici dispatcher | Full content visibility through CONNECT tunnels (follow-up to domain-level CONNECT proxy). Placeholder injection at proxy. More work but no compromises. Could be built as a general-purpose solution for any library using undici
-17. Populate parameters_summary in /classify — Change classify-endpoint.ts:107 from parameters_summary: "" to parameters_summary: redactCredentials(JSON.stringify(params).substring(0, 500)) for audit forensics. 
-18. Stress-test rate limiter and loop guard — These guards have never fired in production. Consider adding a load test that generates >60 req/min to verify they work under pressure, not just in unit tests.
+17. ~~Populate parameters_summary in /classify~~ (done — PR #34, redact-before-truncate with try-catch for unserializable params)
+18. ~~Stress-test rate limiter and loop guard~~ (done — PR #34, 4 stress tests: 100-req burst, per-agent isolation, retryAfter, 200 concurrent agents)
 
 
 **Phase 1 completed** (PR #8, 490 tests). **Memory store** (PR #9, 542 tests). **Phase 2** decomposes into 4 waves.

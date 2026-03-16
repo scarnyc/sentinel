@@ -131,6 +131,71 @@ describe("POST /classify", () => {
 		expect(entries[0].tool).toBe("read_file");
 	});
 
+	it("populates parameters_summary in audit entry", async () => {
+		await postClassify(app, {
+			tool: "read_file",
+			params: { path: "/tmp/test.txt" },
+			agentId: "test-agent",
+			sessionId: "test-session",
+		});
+		const entries = auditLogger.getRecent(1);
+		expect(entries[0].parameters_summary).toContain("path");
+		expect(entries[0].parameters_summary).toContain("/tmp/test.txt");
+	});
+
+	it("redacts credentials in parameters_summary", async () => {
+		const fakeKey = ["sk-ant-api03", "fake-key-value-for-testing"].join("-");
+		await postClassify(app, {
+			tool: "write_file",
+			params: { path: "/tmp/test.txt", content: `token=${fakeKey}` },
+			agentId: "test-agent",
+			sessionId: "test-session",
+		});
+		const entries = auditLogger.getRecent(1);
+		expect(entries[0].parameters_summary).not.toContain(fakeKey);
+		expect(entries[0].parameters_summary).toContain("[REDACTED]");
+	});
+
+	it("handles unserializable params gracefully", async () => {
+		// BigInt values cause JSON.stringify to throw — summarizeParams must not crash
+		const params = { value: Object.create(null) };
+		// We can't pass a true BigInt through JSON POST, but we can verify
+		// the endpoint doesn't crash on unusual objects
+		const res = await postClassify(app, {
+			tool: "read_file",
+			params,
+			agentId: "test-agent",
+			sessionId: "test-session",
+		});
+		expect(res.status).toBe(200);
+		const entries = auditLogger.getRecent(1);
+		expect(entries[0].parameters_summary).toBeTruthy();
+	});
+
+	it("truncates parameters_summary for large params", async () => {
+		await postClassify(app, {
+			tool: "read_file",
+			params: { path: "/tmp/test.txt", data: "x".repeat(1000) },
+			agentId: "test-agent",
+			sessionId: "test-session",
+		});
+		const entries = auditLogger.getRecent(1);
+		expect(entries[0].parameters_summary.length).toBeLessThanOrEqual(500);
+	});
+
+	it("classifies unknown MCP tool via name heuristic", async () => {
+		const res = await postClassify(app, {
+			tool: "mcp__slack__list_channels",
+			params: {},
+			agentId: "test-agent",
+			sessionId: "test-session",
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as ClassifyResponse;
+		expect(body.decision).toBe("auto_approve");
+		expect(body.category).toBe("read");
+	});
+
 	it("returns correct manifestId in response", async () => {
 		const res = await postClassify(app, {
 			tool: "read_file",
