@@ -78,7 +78,6 @@ echo "[openclaw-gateway] Plugin: /app/plugin"
 # Start OpenClaw gateway (no self-respawn in container)
 echo "[openclaw-gateway] Starting OpenClaw gateway..."
 export OPENCLAW_NO_RESPAWN=1
-export NODE_OPTIONS="--max-old-space-size=1536"
 chmod 600 "${CONFIG_FILE}" 2>/dev/null || true
 
 # SENTINEL: Route outbound HTTPS through executor's CONNECT proxy.
@@ -90,5 +89,35 @@ export HTTPS_PROXY="${SENTINEL_EXECUTOR_URL:-http://executor:3141}"
 export HTTP_PROXY="${SENTINEL_EXECUTOR_URL:-http://executor:3141}"
 export NO_PROXY="executor,localhost,127.0.0.1,0.0.0.0"
 echo "[openclaw-gateway] HTTPS_PROXY=${HTTPS_PROXY} (CONNECT tunnel through executor)"
+
+# SENTINEL: Bridge node-fetch to globalThis.fetch so the Sentinel fetch interceptor
+# can catch ALL HTTP requests (including grammY's Telegram API calls).
+# node-fetch is a separate module that ignores globalThis.fetch monkey-patching.
+# This shim replaces node-fetch's default export with globalThis.fetch, ensuring
+# confirmation callbacks in getUpdates responses are intercepted and forwarded.
+# Written to /tmp (tmpfs) because the container filesystem is read-only.
+FETCH_BRIDGE="/tmp/node-fetch-bridge.cjs"
+cat > "${FETCH_BRIDGE}" << 'EOBRIDGE'
+// Redirect require("node-fetch") to globalThis.fetch
+// so Sentinel's fetch interceptor catches all HTTP traffic.
+const Module = require("module");
+const origResolve = Module._resolveFilename;
+const bridgePath = __filename;
+Module._resolveFilename = function(request, parent) {
+  if (request === "node-fetch" && parent && !parent.filename?.includes("node-fetch-bridge")) {
+    return bridgePath;
+  }
+  return origResolve.apply(this, arguments);
+};
+// Export globalThis.fetch as the default, plus standard Web API classes
+module.exports = globalThis.fetch;
+module.exports.default = globalThis.fetch;
+module.exports.Headers = globalThis.Headers;
+module.exports.Request = globalThis.Request;
+module.exports.Response = globalThis.Response;
+EOBRIDGE
+echo "[openclaw-gateway] node-fetch bridge installed at ${FETCH_BRIDGE}"
+
+export NODE_OPTIONS="--max-old-space-size=1536 --require ${FETCH_BRIDGE}"
 
 exec openclaw gateway run --port 18789 --bind lan --allow-unconfigured
