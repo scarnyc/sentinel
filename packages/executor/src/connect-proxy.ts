@@ -60,7 +60,12 @@ export function initConnectProxy(
 
 		// Open TCP connection to upstream
 		const upstreamSocket = netConnect(port, hostname, () => {
-			// Connection established — tell client
+			// Connection established — clear the connect-phase timeout.
+			// The tunnel may be long-lived (e.g., Telegram long-polling holds
+			// connections open for 30+ seconds waiting for updates).
+			upstreamSocket.setTimeout(0);
+
+			// Tell client the tunnel is ready
 			clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
 
 			// Send any buffered data from the CONNECT request
@@ -75,10 +80,13 @@ export function initConnectProxy(
 			auditLog(auditLogger, reqId, normalizedHost, port, "allow");
 		});
 
+		// Timeout only applies to the initial TCP connection phase.
+		// Once connected, setTimeout(0) above disables it so long-lived
+		// tunnels (Telegram long-polling, streaming LLM responses) work.
 		upstreamSocket.setTimeout(UPSTREAM_CONNECT_TIMEOUT_MS);
 
 		upstreamSocket.on("timeout", () => {
-			console.error(`[connect-proxy][${reqId}] Upstream connection timed out: ${target}`);
+			console.error(`[connect-proxy][${reqId}] Upstream connect timed out: ${target}`);
 			upstreamSocket.destroy();
 			clientSocket.destroy();
 		});
