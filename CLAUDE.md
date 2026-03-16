@@ -27,11 +27,12 @@ Optional follow-up (separate commit) | The config only has sentinel-openai provi
 - Execution result passthrough | plugin returns Sentinel's filtered output as OpenClaw tool result (depends on full execution routing)
 - Context compaction — per-result 30% cap, global 75% cap (performance optimization, not security)
 13. Revisit architecture to steal OpenAI's equip framework: https://openai.com/index/equip-responses-api-computer-environment/ | plan: `/Users/wills_mac_mini/.claude/plans/velvety-fluttering-hummingbird.md`
-14. OpenClaw memory isolation — separate memory systems (Phase 3)
-15. Webhook support in Docker — requires inbound connections incompatible with `internal: true` (cloud deployment scope)
-16. Plugin hot-reload — currently requires gateway restart
-17. secure telegram channels upon server wind-down
-18. Fix vault password masking upon `sentinel start`
+14. Update SOUL.md and AGENTS.md so that openclaw knows what sentinel is aware of it. Keep the level of detail 'as needed' so it can't modify sentinel settings
+15. OpenClaw memory isolation — separate memory systems (Phase 3)
+16. Webhook support in Docker — requires inbound connections incompatible with `internal: true` (cloud deployment scope)
+17. Plugin hot-reload — currently requires gateway restart
+18. secure telegram channels upon server wind-down
+19. Fix vault password masking upon `sentinel start`
 
 **Phase 1 completed** (PR #8, 490 tests). **Memory store** (PR #9, 542 tests). **Phase 2** decomposes into 4 waves.
 
