@@ -28,6 +28,11 @@ export function verifyConfirmToken(
 		return false; // Token expired
 	}
 
+	// Reject non-hex input — Buffer.from(hex) silently truncates at first invalid char
+	if (!/^[0-9a-f]{64}$/.test(token)) {
+		return false;
+	}
+
 	const expected = generateConfirmToken(manifestId, expiresAt, secret);
 
 	// Constant-time comparison to prevent timing attacks

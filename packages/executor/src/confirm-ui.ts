@@ -49,10 +49,10 @@ export function createConfirmUiHandler(
 async function resolve(approved) {
 	const actions = document.getElementById('actions');
 	const result = document.getElementById('result');
-	actions.textContent = 'Processing...';
+	actions.style.display = 'none';
 	try {
 		const tokenParams = window.location.search;
-		const res = await fetch('${confirmUrl}' + tokenParams, {
+		const res = await fetch(${JSON.stringify(confirmUrl)} + tokenParams, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ approved })
@@ -64,10 +64,12 @@ async function resolve(approved) {
 		} else {
 			result.className = 'result-error';
 			result.textContent = data.error || 'Failed';
+			actions.style.display = 'flex';
 		}
 	} catch (e) {
 		result.className = 'result-error';
 		result.textContent = 'Network error: ' + e.message;
+		actions.style.display = 'flex';
 	}
 	result.style.display = 'block';
 }

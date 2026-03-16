@@ -41,7 +41,15 @@ function waitForHealthy(
 			if (output === "healthy") {
 				return { healthy: true, elapsed: Date.now() - start };
 			}
-		} catch {
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			if (
+				msg.includes("Cannot connect to the Docker daemon") ||
+				msg.includes("permission denied")
+			) {
+				console.error(`[health] Docker error: ${msg}`);
+				return { healthy: false, elapsed: Date.now() - start };
+			}
 			// container not ready yet
 		}
 		execFileSync("sleep", ["2"]);
@@ -175,7 +183,13 @@ async function startTunnel(
 		child.kill();
 		try {
 			unlinkSync(pidPath);
-		} catch {}
+		} catch (err) {
+			if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+				console.warn(
+					`[tunnel] Failed to clean up PID file: ${err instanceof Error ? err.message : "Unknown"}`,
+				);
+			}
+		}
 		return null;
 	}
 
@@ -186,7 +200,7 @@ async function startTunnel(
 	return { url, process: child };
 }
 
-function stopTunnel(projectRoot: string): void {
+export function stopTunnel(projectRoot: string): void {
 	const pidPath = join(projectRoot, "data", "cloudflared.pid");
 	if (!existsSync(pidPath)) return;
 
@@ -207,7 +221,13 @@ function stopTunnel(projectRoot: string): void {
 
 	try {
 		unlinkSync(pidPath);
-	} catch {}
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+			console.warn(
+				`[tunnel] Failed to clean up PID file: ${err instanceof Error ? err.message : "Unknown"}`,
+			);
+		}
+	}
 }
 
 export async function startCommand(projectRoot: string, services: string[]): Promise<void> {
@@ -353,8 +373,13 @@ export async function startCommand(projectRoot: string, services: string[]): Pro
 	try {
 		run(projectRoot, "openclaw", ["gateway", "restart"]);
 		console.log("Host-mode OpenClaw gateway restarted.");
-	} catch {
-		// openclaw CLI not installed or gateway not running — skip silently
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : String(err);
+		if (msg.includes("ENOENT") || msg.includes("not found")) {
+			// openclaw CLI not installed — expected in Docker-only setups
+		} else {
+			console.warn(`[sentinel] OpenClaw gateway restart failed: ${msg}`);
+		}
 	}
 
 	console.log("\nSentinel is running.");

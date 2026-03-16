@@ -89,7 +89,10 @@ if (egressBindingsRaw) {
 		console.error(
 			`[sentinel] Failed to parse SENTINEL_EGRESS_BINDINGS: ${err instanceof Error ? err.message : "Unknown"}`,
 		);
-		// Fail-closed: invalid config means no egress proxy
+		if (process.env.SENTINEL_DOCKER === "true") {
+			console.error("[sentinel] FATAL: Invalid egress bindings in Docker — cannot start");
+			process.exit(1);
+		}
 	}
 }
 

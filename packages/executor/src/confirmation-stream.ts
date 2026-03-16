@@ -21,7 +21,7 @@ export interface ConfirmationResolvedEvent {
 	value: {
 		manifestId: string;
 		decision: "approved" | "denied" | "timeout";
-		resolvedBy: "web" | "api" | "timeout";
+		resolvedBy: "web" | "api" | "telegram" | "timeout";
 	};
 }
 
@@ -54,9 +54,10 @@ export function createConfirmationStream(): {
 
 	function handler(_c: Context): Response {
 		const encoder = new TextEncoder();
+		let client: SseClient; // declared here so cancel() can access via closure
 		const stream = new ReadableStream<Uint8Array>({
 			start(controller) {
-				const client: SseClient = { controller, encoder };
+				client = { controller, encoder };
 				clients.add(client);
 
 				// Send initial connection event
@@ -76,15 +77,12 @@ export function createConfirmationStream(): {
 				(client as unknown as Record<string, unknown>)._heartbeat = heartbeat;
 			},
 			cancel() {
-				// Remove client on disconnect
-				for (const client of clients) {
-					const hb = (client as unknown as Record<string, unknown>)._heartbeat as
-						| ReturnType<typeof setInterval>
-						| undefined;
-					if (hb) clearInterval(hb);
-				}
-				// Note: specific client removal happens in the enqueue catch above
-				// This cancel fires for the whole stream, so we clean up heartbeats
+				// Only clean up THIS client's heartbeat (not all clients)
+				const hb = (client as unknown as Record<string, unknown>)._heartbeat as
+					| ReturnType<typeof setInterval>
+					| undefined;
+				if (hb) clearInterval(hb);
+				clients.delete(client);
 			},
 		});
 

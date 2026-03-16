@@ -36,6 +36,11 @@ const ConfirmBodySchema = z.object({
 	approved: z.boolean(),
 });
 
+const ConfirmTokenQuerySchema = z.object({
+	token: z.string().regex(/^[0-9a-f]{64}$/),
+	expires: z.coerce.number().int().positive(),
+});
+
 interface PendingConfirmation {
 	manifest: ActionManifest;
 	decision: PolicyDecision;
@@ -67,7 +72,11 @@ export function createApp(
 	confirmBaseUrl?: string,
 ): {
 	app: Hono;
-	resolveConfirmation: (manifestId: string, approved: boolean) => boolean;
+	resolveConfirmation: (
+		manifestId: string,
+		approved: boolean,
+		source?: "web" | "api" | "telegram",
+	) => boolean;
 	emitConfirmation: (event: ConfirmationEvent) => void;
 } {
 	const app = new Hono();
@@ -76,7 +85,11 @@ export function createApp(
 	const baseUrl = confirmBaseUrl ?? "http://localhost:3141";
 
 	// SENTINEL: Shared confirmation resolver — used by HTTP endpoint, egress proxy, and web UI
-	function resolveConfirmation(manifestId: string, approved: boolean): boolean {
+	function resolveConfirmation(
+		manifestId: string,
+		approved: boolean,
+		source: "web" | "api" | "telegram" = "web",
+	): boolean {
 		const pending = pendingConfirmations.get(manifestId);
 		if (!pending) {
 			console.warn(
@@ -97,7 +110,7 @@ export function createApp(
 			value: {
 				manifestId,
 				decision: approved ? "approved" : "denied",
-				resolvedBy: "web",
+				resolvedBy: source,
 			},
 		});
 
@@ -156,7 +169,7 @@ export function createApp(
 					tool: manifest.tool,
 					category: decision.category,
 					reason: decision.reason,
-					parameters: manifest.parameters,
+					parameters: JSON.parse(redactAll(JSON.stringify(manifest.parameters))),
 					expiresAt: new Date(tokenExpiresAt).toISOString(),
 					confirmUrl,
 				},
@@ -252,6 +265,11 @@ export function createApp(
 		}
 	}
 	// SENTINEL: Derive confirm token secret from HMAC secret (or generate standalone 32-byte key)
+	if (!hmacSecret) {
+		console.warn(
+			"[sentinel] No HMAC secret — generated ephemeral confirm token key (will not survive restart)",
+		);
+	}
 	const confirmTokenSecret = hmacSecret ?? Buffer.from(crypto.getRandomValues(new Uint8Array(32)));
 
 	app.use("*", async (c, next) => {
@@ -271,9 +289,18 @@ export function createApp(
 			const token = url.searchParams.get("token");
 			const expires = url.searchParams.get("expires");
 
-			if (token && expires) {
-				const expiresAt = Number.parseInt(expires, 10);
-				if (verifyConfirmToken(manifestId, token, expiresAt, confirmTokenSecret)) {
+			// SENTINEL: Partial HMAC params — both must be present or neither
+			if (token || expires) {
+				if (!token || !expires) {
+					return c.json({ error: "Both 'token' and 'expires' query parameters are required" }, 400);
+				}
+				const parsed = ConfirmTokenQuerySchema.safeParse({ token, expires });
+				if (!parsed.success) {
+					return c.json({ error: "Invalid token or expires format" }, 400);
+				}
+				if (
+					verifyConfirmToken(manifestId, parsed.data.token, parsed.data.expires, confirmTokenSecret)
+				) {
 					return next(); // Valid HMAC token — bypass bearer auth
 				}
 				return c.json({ error: "Invalid or expired confirmation token" }, 403);
@@ -301,7 +328,7 @@ export function createApp(
 		const pending = Array.from(pendingConfirmations.entries()).map(([id, p]) => ({
 			manifestId: id,
 			tool: p.manifest.tool,
-			parameters: p.manifest.parameters,
+			parameters: JSON.parse(redactAll(JSON.stringify(p.manifest.parameters))),
 			category: p.decision.category,
 			reason: p.decision.reason,
 		}));

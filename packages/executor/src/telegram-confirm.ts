@@ -34,7 +34,11 @@ export class TelegramConfirmAdapter {
 	 * Used in Docker deployment where OpenClaw routes through /proxy/egress.
 	 */
 	toInterceptor(
-		resolveConfirmation: (id: string, approved: boolean) => boolean,
+		resolveConfirmation: (
+			id: string,
+			approved: boolean,
+			source?: "web" | "api" | "telegram",
+		) => boolean,
 	): TelegramInterceptor {
 		return {
 			isAuthorizedChat: (id: number) => id === this.chatId,
