@@ -22,6 +22,7 @@ const CONFIG: SentinelConfig = {
 	auditLogPath: "",
 	vaultPath: "",
 	gwsDefaultDeny: false,
+	maxRecursionDepth: 5,
 	authToken: AUTH_TOKEN,
 	llm: { provider: "anthropic", model: "claude-sonnet-4-20250514", maxTokens: 4096 },
 };

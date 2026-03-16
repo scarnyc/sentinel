@@ -9,6 +9,7 @@ const BASE_CONFIG: SentinelConfig = {
 	auditLogPath: "/app/data/audit.db",
 	vaultPath: "/app/data/vault.enc",
 	gwsDefaultDeny: false,
+	maxRecursionDepth: 5,
 	llm: { provider: "anthropic", model: "claude-sonnet-4-20250514", maxTokens: 4096 },
 };
 

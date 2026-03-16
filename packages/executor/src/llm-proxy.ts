@@ -61,6 +61,173 @@ const HOST_AUTH_HEADERS: Record<
 /** Upstream fetch timeout — prevents indefinite hangs from DNS, TLS, or slow responses. */
 const UPSTREAM_TIMEOUT_MS = 60_000;
 
+/**
+ * SENTINEL: Forward LLM requests to Plano model routing proxy.
+ * When SENTINEL_PLANO_URL is set, all LLM proxy requests bypass direct provider
+ * routing and go through Plano instead. Plano handles provider selection,
+ * failover, and API key injection from its own config.
+ *
+ * Security: Auth headers are stripped (Plano manages its own keys).
+ * Credential filtering still applies to responses (defense-in-depth).
+ */
+async function forwardToPlano(
+	c: Context,
+	planoUrl: string,
+	auditLogger: AuditLogger | undefined,
+	proxyStart: number,
+	reqId: string,
+): Promise<Response> {
+	// Extract downstream path (everything after /proxy/llm)
+	const url = new URL(c.req.url);
+	const proxyPrefix = "/proxy/llm";
+	const rawPath = url.pathname.slice(proxyPrefix.length);
+	const downstreamPath = !rawPath || rawPath === "/" ? "/v1/chat/completions" : rawPath;
+
+	const targetUrl = `${planoUrl}${downstreamPath}`;
+	console.log(`[llm-proxy][${reqId}] → Plano: ${c.req.method} ${targetUrl}`);
+
+	// Forward headers but strip auth (Plano handles its own auth)
+	const forwardHeaders = new Headers();
+	for (const [key, value] of c.req.raw.headers.entries()) {
+		const lower = key.toLowerCase();
+		if (
+			lower === "host" ||
+			lower === "connection" ||
+			lower === "x-llm-host" ||
+			lower === "authorization" ||
+			lower === "x-api-key" ||
+			lower === "x-goog-api-key"
+		) {
+			continue;
+		}
+		forwardHeaders.set(key, value);
+	}
+
+	const requestBody = c.req.method !== "GET" ? await c.req.text() : undefined;
+	const fetchController = new AbortController();
+	const fetchTimer = setTimeout(() => {
+		console.error(`[llm-proxy][${reqId}] Plano fetch timed out after ${UPSTREAM_TIMEOUT_MS}ms`);
+		fetchController.abort();
+	}, UPSTREAM_TIMEOUT_MS);
+
+	try {
+		const upstreamResponse = await fetch(targetUrl, {
+			method: c.req.method,
+			headers: forwardHeaders,
+			body: requestBody,
+			signal: fetchController.signal,
+		});
+		clearTimeout(fetchTimer);
+
+		// Filter response headers
+		const responseHeaders = new Headers();
+		for (const [key, value] of upstreamResponse.headers.entries()) {
+			if (ALLOWED_RESPONSE_HEADERS.has(key.toLowerCase())) {
+				responseHeaders.set(key, value);
+			}
+		}
+
+		const contentType = upstreamResponse.headers.get("content-type") ?? "";
+		const isStreaming = contentType.includes("text/event-stream");
+
+		if (isStreaming) {
+			responseHeaders.delete("content-length");
+			responseHeaders.delete("transfer-encoding");
+
+			// Audit streaming Plano request
+			if (auditLogger) {
+				try {
+					auditLogger.log({
+						id: crypto.randomUUID(),
+						timestamp: new Date().toISOString(),
+						manifestId: crypto.randomUUID(),
+						sessionId: "system",
+						agentId: "agent",
+						tool: "llm_proxy",
+						category: "read",
+						decision: "auto_approve",
+						parameters_summary: `${c.req.method} plano${downstreamPath} [streaming]`,
+						result: upstreamResponse.status < 400 ? "success" : "failure",
+						duration_ms: Date.now() - proxyStart,
+					});
+				} catch {
+					/* audit best-effort */
+				}
+			}
+
+			// Still filter credentials from SSE stream (defense-in-depth)
+			const filteredStream = upstreamResponse.body
+				? upstreamResponse.body.pipeThrough(createSseCredentialFilter())
+				: null;
+
+			return new Response(filteredStream, {
+				status: upstreamResponse.status,
+				headers: responseHeaders,
+			});
+		}
+
+		// Non-streaming: filter credentials from response
+		const rawBody = await upstreamResponse.text();
+		const filteredBody = redactAllCredentialsWithEncoding(rawBody);
+		responseHeaders.delete("content-length");
+
+		const duration = Date.now() - proxyStart;
+		console.log(`[llm-proxy][${reqId}] Plano ${upstreamResponse.status} (${duration}ms)`);
+
+		// Audit
+		if (auditLogger) {
+			try {
+				auditLogger.log({
+					id: crypto.randomUUID(),
+					timestamp: new Date().toISOString(),
+					manifestId: crypto.randomUUID(),
+					sessionId: "system",
+					agentId: "agent",
+					tool: "llm_proxy",
+					category: "read",
+					decision: "auto_approve",
+					parameters_summary: `${c.req.method} plano${downstreamPath}`,
+					result: upstreamResponse.status < 400 ? "success" : "failure",
+					duration_ms: duration,
+				});
+			} catch {
+				/* audit best-effort */
+			}
+		}
+
+		return new Response(filteredBody, {
+			status: upstreamResponse.status,
+			headers: responseHeaders,
+		});
+	} catch (error) {
+		clearTimeout(fetchTimer);
+		console.error(
+			`[llm-proxy][${reqId}] Plano error (${Date.now() - proxyStart}ms): ${error instanceof Error ? error.message : "Unknown"}`,
+		);
+		// Audit Plano error
+		if (auditLogger) {
+			try {
+				auditLogger.log({
+					id: crypto.randomUUID(),
+					timestamp: new Date().toISOString(),
+					manifestId: crypto.randomUUID(),
+					sessionId: "system",
+					agentId: "agent",
+					tool: "llm_proxy",
+					category: "read",
+					decision: "auto_approve",
+					parameters_summary: `${c.req.method} plano${downstreamPath} [error]`,
+					result: "failure",
+					duration_ms: Date.now() - proxyStart,
+				});
+			} catch {
+				/* audit best-effort */
+			}
+		}
+		return c.json({ error: "LLM proxy upstream error" }, 502);
+	}
+}
+
 const debug =
 	process.env.SENTINEL_DEBUG === "true"
 		? (reqId: string, msg: string) => console.log(`[llm-proxy][${reqId}] ${msg}`)
@@ -80,6 +247,13 @@ export function createLlmProxyHandler(
 	return async (c: Context): Promise<Response> => {
 		const proxyStart = Date.now();
 		const reqId = crypto.randomUUID().slice(0, 8);
+
+		// SENTINEL: When Plano is configured, forward all requests through it.
+		// Plano handles provider selection, failover, and API key injection.
+		const planoUrl = process.env.SENTINEL_PLANO_URL;
+		if (planoUrl) {
+			return forwardToPlano(c, planoUrl, auditLogger, proxyStart, reqId);
+		}
 
 		// Extract the downstream path (everything after /proxy/llm)
 		const url = new URL(c.req.url);

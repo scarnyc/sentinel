@@ -21,6 +21,8 @@ export {
 export {
 	type ClassificationOverride,
 	ClassificationOverrideSchema,
+	type ContextBudgetConfig,
+	ContextBudgetConfigSchema,
 	type GwsAgentScope,
 	GwsAgentScopeSchema,
 	type GwsAgentScopes,

@@ -232,7 +232,7 @@ export function stopTunnel(projectRoot: string): void {
 
 export async function startCommand(projectRoot: string, services: string[]): Promise<void> {
 	const composeFile = resolve(projectRoot, "docker-compose.yml");
-	const targets = services.length > 0 ? services : ["executor", "openclaw-gateway"];
+	const targets = services.length > 0 ? services : ["executor", "plano", "openclaw-gateway"];
 
 	// Prompt for vault password if executor is being started
 	let vaultPassword: string | undefined;
@@ -269,6 +269,28 @@ export async function startCommand(projectRoot: string, services: string[]): Pro
 		HTTPS_PROXY: "http://executor:3141",
 		NO_PROXY: "executor",
 	};
+
+	// SENTINEL: When Plano is in targets, configure executor to route through it
+	if (targets.includes("plano")) {
+		composeEnv.SENTINEL_PLANO_URL = "http://plano:8001";
+
+		// Pass through API keys for Plano (reads from host env / envchain)
+		for (const envVar of ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"]) {
+			if (process.env[envVar]) {
+				composeEnv[envVar] = process.env[envVar] as string;
+			}
+		}
+
+		// Warn about missing API keys
+		const planoKeysMissing: string[] = [];
+		for (const envVar of ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"]) {
+			if (!process.env[envVar]) planoKeysMissing.push(envVar);
+		}
+		if (planoKeysMissing.length > 0) {
+			console.warn(`[sentinel] Plano API keys not set: ${planoKeysMissing.join(", ")}`);
+			console.warn("[sentinel] Set via envchain or env vars for model routing to work");
+		}
+	}
 	if (vaultPassword) {
 		composeEnv.SENTINEL_VAULT_PASSWORD = vaultPassword;
 	}

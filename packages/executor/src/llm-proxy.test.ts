@@ -676,6 +676,195 @@ describe("LLM Proxy audit logging (M8)", () => {
 	});
 });
 
+describe("LLM Proxy Plano forwarding", () => {
+	afterEach(() => {
+		delete process.env.SENTINEL_PLANO_URL;
+	});
+
+	it("forwards requests to Plano when SENTINEL_PLANO_URL is set", async () => {
+		process.env.SENTINEL_PLANO_URL = "http://plano:8001";
+		// Must re-create handler after env change
+		const planoApp = new Hono();
+		planoApp.all("/proxy/llm/*", createLlmProxyHandler());
+
+		let capturedUrl: string | undefined;
+		let capturedHeaders: Headers | undefined;
+		const mockResponse = new Response(JSON.stringify({ id: "msg_plano" }), {
+			status: 200,
+			headers: { "Content-Type": "application/json" },
+		});
+		vi.spyOn(globalThis, "fetch").mockImplementationOnce(async (url, init) => {
+			capturedUrl = url as string;
+			capturedHeaders = init?.headers as Headers;
+			return mockResponse;
+		});
+
+		const res = await planoApp.request("/proxy/llm/v1/chat/completions", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ model: "openai/gpt-4.1" }),
+		});
+
+		expect(res.status).toBe(200);
+		expect(capturedUrl).toBe("http://plano:8001/v1/chat/completions");
+		// Auth headers must NOT be injected — Plano manages its own keys
+		expect(capturedHeaders?.get("authorization")).toBeNull();
+		expect(capturedHeaders?.get("x-api-key")).toBeNull();
+		expect(capturedHeaders?.get("x-goog-api-key")).toBeNull();
+	});
+
+	it("strips auth headers when forwarding to Plano", async () => {
+		process.env.SENTINEL_PLANO_URL = "http://plano:8001";
+		const planoApp = new Hono();
+		planoApp.all("/proxy/llm/*", createLlmProxyHandler());
+
+		let capturedHeaders: Headers | undefined;
+		const mockResponse = new Response("{}", { status: 200 });
+		vi.spyOn(globalThis, "fetch").mockImplementationOnce(async (_url, init) => {
+			capturedHeaders = init?.headers as Headers;
+			return mockResponse;
+		});
+
+		await planoApp.request("/proxy/llm/v1/messages", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Authorization: "Bearer agent-injected",
+				"x-api-key": "agent-key",
+				"x-goog-api-key": "agent-gemini",
+				"x-llm-host": "should-be-stripped",
+			},
+			body: JSON.stringify({}),
+		});
+
+		expect(capturedHeaders?.get("authorization")).toBeNull();
+		expect(capturedHeaders?.get("x-api-key")).toBeNull();
+		expect(capturedHeaders?.get("x-goog-api-key")).toBeNull();
+		expect(capturedHeaders?.get("x-llm-host")).toBeNull();
+		// Content-Type should be forwarded
+		expect(capturedHeaders?.get("content-type")).toBe("application/json");
+	});
+
+	it("does NOT forward to Plano when SENTINEL_PLANO_URL is unset", async () => {
+		// No SENTINEL_PLANO_URL set — should use direct routing
+		let capturedUrl: string | undefined;
+		const mockResponse = new Response("{}", {
+			status: 200,
+			headers: { "Content-Type": "application/json" },
+		});
+		vi.spyOn(globalThis, "fetch").mockImplementationOnce(async (url, _init) => {
+			capturedUrl = url as string;
+			return mockResponse;
+		});
+
+		const res = await app.request("/proxy/llm/v1/messages", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+
+		expect(res.status).toBe(200);
+		// Should go directly to Anthropic, not Plano
+		expect(capturedUrl).toBe("https://api.anthropic.com/v1/messages");
+	});
+
+	it("filters credentials from Plano responses", async () => {
+		process.env.SENTINEL_PLANO_URL = "http://plano:8001";
+		const planoApp = new Hono();
+		planoApp.all("/proxy/llm/*", createLlmProxyHandler());
+
+		const bodyWithCreds = JSON.stringify({
+			error: { message: "Invalid API key: sk-ant-abc123-leaked-key" },
+		});
+		const mockResponse = new Response(bodyWithCreds, {
+			status: 401,
+			headers: { "content-type": "application/json" },
+		});
+		vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(mockResponse);
+
+		const res = await planoApp.request("/proxy/llm/v1/chat/completions", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+
+		const text = await res.text();
+		expect(text).not.toContain("sk-ant-abc123");
+		expect(text).toContain("[REDACTED]");
+	});
+
+	it("returns 502 on Plano connection error", async () => {
+		process.env.SENTINEL_PLANO_URL = "http://plano:8001";
+		const planoApp = new Hono();
+		planoApp.all("/proxy/llm/*", createLlmProxyHandler());
+
+		vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new Error("ECONNREFUSED"));
+
+		const res = await planoApp.request("/proxy/llm/v1/chat/completions", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+
+		expect(res.status).toBe(502);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toBe("LLM proxy upstream error");
+	});
+
+	it("defaults downstream path to /v1/chat/completions when empty", async () => {
+		process.env.SENTINEL_PLANO_URL = "http://plano:8001";
+		const planoApp = new Hono();
+		planoApp.all("/proxy/llm/*", createLlmProxyHandler());
+
+		let capturedUrl: string | undefined;
+		const mockResponse = new Response("{}", { status: 200 });
+		vi.spyOn(globalThis, "fetch").mockImplementationOnce(async (url, _init) => {
+			capturedUrl = url as string;
+			return mockResponse;
+		});
+
+		// Request to /proxy/llm/ with no further path
+		await planoApp.request("/proxy/llm/", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+
+		expect(capturedUrl).toBe("http://plano:8001/v1/chat/completions");
+	});
+
+	it("audits Plano requests when auditLogger is provided", async () => {
+		process.env.SENTINEL_PLANO_URL = "http://plano:8001";
+		const mockAuditLogger = { log: vi.fn() };
+		const planoApp = new Hono();
+		planoApp.all(
+			"/proxy/llm/*",
+			createLlmProxyHandler(
+				undefined,
+				mockAuditLogger as unknown as import("@sentinel/audit").AuditLogger,
+			),
+		);
+
+		const mockResponse = new Response(JSON.stringify({ id: "msg_123" }), {
+			status: 200,
+			headers: { "Content-Type": "application/json" },
+		});
+		vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(mockResponse);
+
+		await planoApp.request("/proxy/llm/v1/chat/completions", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+
+		expect(mockAuditLogger.log).toHaveBeenCalledOnce();
+		const entry = mockAuditLogger.log.mock.calls[0][0];
+		expect(entry.tool).toBe("llm_proxy");
+		expect(entry.result).toBe("success");
+		expect(entry.parameters_summary).toContain("plano");
+	});
+});
+
 describe("LLM Proxy vault error message suppression (L5)", () => {
 	it("does not log error.message on vault failure", async () => {
 		const mkdtemp = (await import("node:fs/promises")).mkdtemp;

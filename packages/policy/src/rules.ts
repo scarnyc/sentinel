@@ -26,6 +26,7 @@ export function getDefaultConfig(): SentinelConfig {
 		auditLogPath: "./data/audit.db",
 		vaultPath: "./data/vault.db",
 		gwsDefaultDeny: false,
+		maxRecursionDepth: 5,
 		llm: {
 			provider: "anthropic",
 			model: "claude-sonnet-4-20250514",

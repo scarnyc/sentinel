@@ -1,6 +1,6 @@
 import type { AuditLogger } from "@sentinel/audit";
 import { redactCredentials } from "@sentinel/audit";
-import { classify, type LoopGuard, type RateLimiter } from "@sentinel/policy";
+import { classify, type DepthGuard, type LoopGuard, type RateLimiter } from "@sentinel/policy";
 import type {
 	ActionManifest,
 	AuditEntry,
@@ -9,6 +9,7 @@ import type {
 	ToolResult,
 } from "@sentinel/types";
 import { ActionManifestSchema } from "@sentinel/types";
+import type { ContextBudgetTracker } from "./context-budget.js";
 import { filterCredentials } from "./credential-filter.js";
 import { moderate } from "./moderation/scanner.js";
 import { scrubPII } from "./pii-scrubber.js";
@@ -28,6 +29,8 @@ function summarizeParams(params: Record<string, unknown>): string {
 export interface PipelineGuards {
 	rateLimiter?: RateLimiter;
 	loopGuard?: LoopGuard;
+	depthGuard?: DepthGuard;
+	budgetTracker?: ContextBudgetTracker;
 }
 
 export async function handleExecute(
@@ -128,6 +131,28 @@ export async function handleExecute(
 		parameters_summary: redactCredentials(summarizeParams(manifest.parameters)),
 	};
 
+	// 4b. Depth guard check — reject deeply-nested agent chains before confirmation
+	if (guards?.depthGuard) {
+		const depthResult = guards.depthGuard.check(
+			manifest.agentId,
+			manifest.parentAgentId,
+			manifest.depth,
+		);
+		if (!depthResult.allowed) {
+			auditLogger.log({
+				...auditBase,
+				result: "blocked_by_depth_guard",
+				duration_ms: 0,
+			});
+			return {
+				manifestId: manifest.id,
+				success: false,
+				error: depthResult.reason ?? "Max recursion depth exceeded",
+				duration_ms: 0,
+			};
+		}
+	}
+
 	if (decision.action === "block") {
 		auditLogger.log({
 			...auditBase,
@@ -221,7 +246,15 @@ export async function handleExecute(
 	const credFiltered = filterCredentials(rawResult);
 
 	// 9. PII scrub (Phase 1)
-	const result = scrubPII(credFiltered);
+	let result = scrubPII(credFiltered);
+
+	// 9b. Context budget enforcement — truncate after redaction (redact-before-truncate ordering)
+	if (guards?.budgetTracker && result.output) {
+		const budgeted = guards.budgetTracker.enforce(manifest.sessionId, result.output);
+		if (budgeted.truncated) {
+			result = { ...result, output: budgeted.output };
+		}
+	}
 
 	// 10. Post-execute moderation: scan tool output
 	if (result.output) {

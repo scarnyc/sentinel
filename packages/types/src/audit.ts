@@ -18,6 +18,7 @@ export const AuditEntrySchema = z.object({
 		"blocked_by_policy",
 		"blocked_by_rate_limit",
 		"blocked_by_loop_guard",
+		"blocked_by_depth_guard",
 		"loop_guard_warning",
 	]),
 	duration_ms: z.number().nonnegative().optional(),

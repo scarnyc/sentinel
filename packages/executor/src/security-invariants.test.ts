@@ -30,6 +30,7 @@ const DEFAULT_CONFIG = {
 	auditLogPath: "",
 	vaultPath: "",
 	gwsDefaultDeny: false,
+	maxRecursionDepth: 5,
 	llm: { provider: "anthropic" as const, model: "claude-sonnet-4-20250514", maxTokens: 4096 },
 };
 
