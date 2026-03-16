@@ -1,6 +1,11 @@
 export { classifyBashCommand } from "./bash-parser.js";
 export { classify } from "./classifier.js";
 export {
+	type DepthCheckResult,
+	DepthGuard,
+	type DepthGuardConfig,
+} from "./depth-guard.js";
+export {
 	type LoopAction,
 	type LoopCheckResult,
 	LoopGuard,

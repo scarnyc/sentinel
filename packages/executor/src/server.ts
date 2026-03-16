@@ -1,6 +1,6 @@
 import type { AuditLogger } from "@sentinel/audit";
 import type { CredentialVault } from "@sentinel/crypto";
-import { LoopGuard, RateLimiter } from "@sentinel/policy";
+import { DepthGuard, LoopGuard, RateLimiter } from "@sentinel/policy";
 import type {
 	ActionManifest,
 	AgentCard,
@@ -17,6 +17,7 @@ import { handleConfirmOnly } from "./confirm-endpoint.js";
 import { generateConfirmToken, verifyConfirmToken } from "./confirm-token.js";
 import { createConfirmUiHandler } from "./confirm-ui.js";
 import { type ConfirmationEvent, createConfirmationStream } from "./confirmation-stream.js";
+import { ContextBudgetTracker } from "./context-budget.js";
 import type { DelegationQueue } from "./delegate-handler.js";
 import { createEgressProxyHandler, type TelegramInterceptor } from "./egress-proxy.js";
 import { handleFilterOutput } from "./filter-endpoint.js";
@@ -117,10 +118,12 @@ export function createApp(
 		return true;
 	}
 
-	// SENTINEL: Phase 1 pipeline guards — rate limiter and loop guard
+	// SENTINEL: Pipeline guards — rate limiter, loop guard, depth guard, context budget
 	const guards: PipelineGuards = {
 		rateLimiter: new RateLimiter({ rate: 60, period: 60_000 }), // 60 req/min per agent
 		loopGuard: new LoopGuard(),
+		depthGuard: new DepthGuard({ maxDepth: config.maxRecursionDepth ?? 5 }),
+		budgetTracker: new ContextBudgetTracker(config.contextBudget ?? {}),
 	};
 
 	// SENTINEL: 5-minute auto-deny for unresolved confirmations (LOW-12)

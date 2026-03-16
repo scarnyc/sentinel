@@ -88,3 +88,13 @@ const server = http.createServer((req,res) => {\
 });\
 server.listen(8080, '0.0.0.0', () => console.log('[openclaw-gateway] Listening on :8080'));\
 "]
+
+# Plano stage — AI-native proxy for model routing
+# Handles provider failover, model aliasing, and OpenTelemetry tracing
+FROM python:3.12-slim AS plano
+RUN pip install --no-cache-dir planoai
+WORKDIR /app
+COPY config/plano.yaml ./config/plano.yaml
+USER nobody
+EXPOSE 8001
+ENTRYPOINT ["planoai", "up", "config/plano.yaml"]

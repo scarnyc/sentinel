@@ -1,5 +1,5 @@
 import { type AuditLogger, redactCredentials } from "@sentinel/audit";
-import { classify, type LoopGuard, type RateLimiter } from "@sentinel/policy";
+import { classify, type DepthGuard, type LoopGuard, type RateLimiter } from "@sentinel/policy";
 import type { ClassifyResponse, SentinelConfig } from "@sentinel/types";
 import { ActionManifestSchema, ClassifyRequestSchema } from "@sentinel/types";
 import type { Context } from "hono";
@@ -21,6 +21,7 @@ function summarizeParams(params: Record<string, unknown>): string {
 export interface ClassifyGuards {
 	rateLimiter?: RateLimiter;
 	loopGuard?: LoopGuard;
+	depthGuard?: DepthGuard;
 }
 
 export async function handleClassify(
@@ -35,7 +36,7 @@ export async function handleClassify(
 		return c.json({ error: `Invalid request: ${parsed.error.message}` }, 400);
 	}
 
-	const { tool, params, agentId, sessionId, source } = parsed.data;
+	const { tool, params, agentId, sessionId, source, parentAgentId, depth } = parsed.data;
 
 	// Build an ActionManifest from the classify request
 	const manifest = ActionManifestSchema.parse({
@@ -98,6 +99,36 @@ export async function handleClassify(
 					decision: "block",
 					category: "dangerous",
 					reason: loopResult.reason ?? "Loop detected — action blocked",
+					manifestId: manifest.id,
+				} satisfies ClassifyResponse,
+				429,
+			);
+		}
+	}
+
+	// Depth guard check
+	if (guards?.depthGuard) {
+		const depthResult = guards.depthGuard.check(agentId, parentAgentId, depth);
+		if (!depthResult.allowed) {
+			auditLogger.log({
+				id: crypto.randomUUID(),
+				timestamp: new Date().toISOString(),
+				manifestId: manifest.id,
+				sessionId,
+				agentId,
+				tool,
+				category: "dangerous",
+				decision: "block",
+				parameters_summary: summarizeParams(params),
+				result: "blocked_by_depth_guard",
+				duration_ms: 0,
+				source,
+			});
+			return c.json(
+				{
+					decision: "block",
+					category: "dangerous",
+					reason: depthResult.reason ?? "Max recursion depth exceeded",
 					manifestId: manifest.id,
 				} satisfies ClassifyResponse,
 				429,

@@ -25,6 +25,8 @@ services:
       - SENTINEL_TELEGRAM_CHAT_ID=${SENTINEL_TELEGRAM_CHAT_ID:-}
       # Confirmation web UI base URL (Cloudflare tunnel or LAN IP — set by `sentinel start`)
       - SENTINEL_CONFIRM_BASE_URL=${SENTINEL_CONFIRM_BASE_URL:-http://localhost:3141}
+      # SENTINEL: Plano model routing proxy — when set, LLM proxy forwards to Plano instead of direct provider APIs
+      - SENTINEL_PLANO_URL=${SENTINEL_PLANO_URL:-}
     # SENTINEL: L6 — Container resource limits
     mem_limit: 512m
     cpus: "1.0"
@@ -56,7 +58,7 @@ services:
     environment:
       - EXECUTOR_URL=http://executor:3141
       # Route LLM calls through executor proxy — agent never holds API keys
-      - ANTHROPIC_BASE_URL=http://executor:3141/proxy/llm
+      - ANTHROPIC_BASE_URL=http://executor:3141/proxy/llm/anthropic
     # SENTINEL: H4 — DNS restriction: agent resolves only Docker-internal names
     # 127.0.0.11 is Docker's embedded DNS; blocks external resolution while allowing
     # container hostname resolution (e.g., "executor" -> executor container IP)
@@ -80,6 +82,41 @@ services:
     depends_on:
       executor:
         condition: service_healthy
+
+  # SENTINEL: Wave 2.4 — Plano model routing proxy
+  # AI-native proxy for provider failover, model aliasing, and OpenTelemetry tracing.
+  # Executor forwards LLM requests to Plano when SENTINEL_PLANO_URL is set.
+  plano:
+    build:
+      context: .
+      target: plano
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+    mem_limit: 256m
+    cpus: "0.5"
+    pids_limit: 128
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - sentinel-internal
+      - sentinel-external
+    depends_on:
+      executor:
+        condition: service_healthy
+    expose:
+      - "8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   # SENTINEL: Wave 2.3 — OpenClaw gateway
   # Runs the OpenClaw plugin with Sentinel integration inside Docker.

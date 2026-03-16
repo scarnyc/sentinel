@@ -60,6 +60,13 @@ export const GwsIntegrityConfigSchema = z.object({
 });
 export type GwsIntegrityConfig = z.infer<typeof GwsIntegrityConfigSchema>;
 
+export const ContextBudgetConfigSchema = z.object({
+	contextWindowTokens: z.number().int().positive().default(100_000),
+	perResultCapPct: z.number().min(0).max(1).default(0.3),
+	globalCapPct: z.number().min(0).max(1).default(0.75),
+});
+export type ContextBudgetConfig = z.infer<typeof ContextBudgetConfigSchema>;
+
 export const SentinelConfigSchema = z.object({
 	executor: z.object({
 		port: z.number().int().positive(),
@@ -76,6 +83,10 @@ export const SentinelConfigSchema = z.object({
 	gwsIntegrity: GwsIntegrityConfigSchema.optional(),
 	/** When true, agents without a GWS scope entry are denied (not just warned). Docker default: true. */
 	gwsDefaultDeny: z.boolean().default(false),
+	/** Context budget caps — per-result 30% and global 75% of context window. */
+	contextBudget: ContextBudgetConfigSchema.optional(),
+	/** Max agent-to-agent recursion depth (default 5). */
+	maxRecursionDepth: z.number().int().min(1).max(20).default(5),
 	llm: z.object({
 		provider: z.literal("anthropic"),
 		model: z.string().min(1),

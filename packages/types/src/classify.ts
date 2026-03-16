@@ -14,6 +14,8 @@ export const ClassifyRequestSchema = z.object({
 	agentId: z.string().min(1),
 	sessionId: z.string().min(1),
 	source: z.enum(["sentinel", "openclaw", "claude-code"]).optional(),
+	parentAgentId: z.string().min(1).optional(),
+	depth: z.number().int().nonnegative().optional(),
 });
 export type ClassifyRequest = z.infer<typeof ClassifyRequestSchema>;
 
