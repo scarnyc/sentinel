@@ -68,7 +68,9 @@ export function createConnectHandler(options: ConnectProxyOptions) {
 
 		console.log(`[connect-proxy][${reqId}] CONNECT ${hostname}:${port}`);
 
-		// Auth check — Proxy-Authorization: Bearer <token>
+		// Auth check — Proxy-Authorization: Bearer <token> or Basic <base64(user:token)>
+		// Bearer: direct token match. Basic: undici's EnvHttpProxyAgent sends Basic auth
+		// from HTTPS_PROXY URL userinfo (http://user:token@host:port).
 		if (authToken) {
 			const proxyAuth = req.headers["proxy-authorization"];
 			if (!proxyAuth) {
@@ -77,12 +79,23 @@ export function createConnectHandler(options: ConnectProxyOptions) {
 				return;
 			}
 			const parts = proxyAuth.split(" ");
-			if (parts.length !== 2 || parts[0] !== "Bearer") {
+			if (parts.length !== 2 || (parts[0] !== "Bearer" && parts[0] !== "Basic")) {
 				writeReject(clientSocket, 407, "Invalid Proxy-Authorization scheme");
 				auditConnect(auditLogger, reqId, target, "block", "blocked_by_policy", startTime, agentId);
 				return;
 			}
-			const tokenBuf = Buffer.from(parts[1]);
+
+			let presentedToken: string;
+			if (parts[0] === "Bearer") {
+				presentedToken = parts[1];
+			} else {
+				// Basic auth: base64(username:password) — extract password as the token
+				const decoded = Buffer.from(parts[1], "base64").toString("utf-8");
+				const colonIdx = decoded.indexOf(":");
+				presentedToken = colonIdx >= 0 ? decoded.slice(colonIdx + 1) : decoded;
+			}
+
+			const tokenBuf = Buffer.from(presentedToken);
 			const expectedBuf = Buffer.from(authToken);
 			if (tokenBuf.length !== expectedBuf.length || !timingSafeEqual(tokenBuf, expectedBuf)) {
 				writeReject(clientSocket, 407, "Invalid proxy credentials");

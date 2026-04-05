@@ -249,9 +249,10 @@ export async function startCommand(projectRoot: string, services: string[]): Pro
 	// one internally but the gateway can't match it. Generate here so both share the same value.
 	const authToken = process.env.SENTINEL_AUTH_TOKEN || randomBytes(32).toString("hex");
 
-	// SENTINEL: Default egress bindings for Telegram confirmation interception (Docker mode)
+	// SENTINEL: Default egress bindings for Docker mode (Telegram + Brave Search)
 	const defaultEgressBindings = JSON.stringify([
 		{ serviceId: "telegram_bot", allowedDomains: ["api.telegram.org"] },
+		{ serviceId: "brave_search", allowedDomains: ["api.search.brave.com"] },
 	]);
 
 	// SENTINEL: Start Cloudflare tunnel for public confirmation URLs
@@ -371,19 +372,6 @@ export async function startCommand(projectRoot: string, services: string[]): Pro
 
 	// Show final status
 	console.log("\n" + run(projectRoot, "docker", ["compose", "-f", composeFile, "ps"]));
-
-	// Restart host-mode OpenClaw gateway if installed (fallback for non-Docker OpenClaw)
-	try {
-		run(projectRoot, "openclaw", ["gateway", "restart"]);
-		console.log("Host-mode OpenClaw gateway restarted.");
-	} catch (err) {
-		const msg = err instanceof Error ? err.message : String(err);
-		if (msg.includes("ENOENT") || msg.includes("not found")) {
-			// openclaw CLI not installed — expected in Docker-only setups
-		} else {
-			console.warn(`[sentinel] OpenClaw gateway restart failed: ${msg}`);
-		}
-	}
 
 	console.log("\nSentinel is running.");
 	console.log(`Confirmation UI: ${confirmBaseUrl}/confirm-ui/<manifestId>`);

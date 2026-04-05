@@ -99,7 +99,7 @@ function createHandler(overrides?: Partial<ConnectProxyOptions>) {
 		...overrides,
 	};
 	const handler = createConnectHandler(opts);
-	return { handler, auditLogger };
+	return { handler, auditLogger, authToken: opts.authToken ?? "" };
 }
 
 // ---------------------------------------------------------------------------
@@ -198,17 +198,50 @@ describe("connect-proxy", () => {
 			expect(auditLogger.log).toHaveBeenCalledWith(expect.objectContaining({ decision: "block" }));
 		});
 
-		it("rejects invalid scheme (not Bearer)", async () => {
+		it("rejects invalid scheme (not Bearer or Basic)", async () => {
 			const { handler } = createHandler();
 			const clientSocket = createMockSocket();
 			const req = createMockReq("api.telegram.org:443", {
-				"proxy-authorization": "Basic dXNlcjpwYXNz",
+				"proxy-authorization": "Digest abc123",
 			});
 
 			await handler(req, clientSocket as unknown as Duplex, Buffer.alloc(0));
 
 			expect(clientSocket.writtenData[0]).toContain("407");
 			expect(clientSocket.writtenData[0]).toContain("Invalid Proxy-Authorization scheme");
+		});
+
+		it("rejects Basic auth with wrong password", async () => {
+			const { handler } = createHandler();
+			const clientSocket = createMockSocket();
+			const req = createMockReq("api.telegram.org:443", {
+				"proxy-authorization": `Basic ${Buffer.from("sentinel:wrong-password").toString("base64")}`,
+			});
+
+			await handler(req, clientSocket as unknown as Duplex, Buffer.alloc(0));
+
+			expect(clientSocket.writtenData[0]).toContain("407");
+			expect(clientSocket.writtenData[0]).toContain("Invalid proxy credentials");
+		});
+
+		it("accepts Basic auth with correct token as password", async () => {
+			const targetSocket = createMockSocket();
+			mockNetConnect.mockImplementation((_port: number, _ip: string, cb: () => void) => {
+				return targetSocket;
+			});
+
+			const { handler, authToken } = createHandler();
+			const clientSocket = createMockSocket();
+			const req = createMockReq("api.telegram.org:443", {
+				"proxy-authorization": `Basic ${Buffer.from(`sentinel:${authToken}`).toString("base64")}`,
+			});
+
+			await handler(req, clientSocket as unknown as Duplex, Buffer.alloc(0));
+
+			// Should reach net.connect (not rejected at auth)
+			expect(mockNetConnect).toHaveBeenCalled();
+			// No 407 response
+			expect(clientSocket.writtenData).toHaveLength(0);
 		});
 
 		it("rejects wrong token (timing-safe)", async () => {

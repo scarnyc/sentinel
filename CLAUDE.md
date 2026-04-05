@@ -7,25 +7,19 @@ Sentinel is a security-hardened agent runtime with process isolation between the
 **Next Steps**:
 1. Context budget enforcement: per-result 30% cap, global 75% cap
 2. Tool recursion depth limiting: max depth 5 for agent-to-agent calls
-3. OpenClaw post-install: configure Brave Search provider (`openclaw configure --section model`), configure embedding provider for memory search, run `openclaw security audit --deep`
+3. OpenClaw post-install: configure Brave Search provider (`openclaw configure --section model`), 
 **Roadmap**: `docs/plans/path-a-v2-adopt-openfang-primitives.md`
 **Wave spec**: `docs/superpowers/specs/2026-03-10-phase-2-waves-design.md`
 4. Set Anthropic and Gemini API keys to work with Plano
-Optional follow-up (separate commit) | The config only has sentinel-openai provider routing through the proxy. There's no sentinel-anthropic or sentinel-gemini provider. The Anthropic auth profile uses direct `mode: "token"` — which means Anthropic API calls would bypass Sentinel's proxy. This may be intentional if you're only using GPT-5.4 for now, but worth noting for later. Investigate Anthropic API failures — The 34% failure rate and malformed /anthropic/v1/messages path suggest a ANTHROPIC_BASE_URL misconfiguration. Fix the URL double-prefix issue.
-5. ~~Update TIER_CONSTRAINTS strings in setup-openclaw.ts~~ (done — PR #34)
-6. ~~Update inline fallback template in setup-openclaw.ts~~ (done — PR #34)
-7. Set up sentinel memory plugin. Add memory operation test scenarios — Invariants 4 (size caps) and 5 (no credentials in memory) are completely unexercised in production. Generate test workloads that exercise memory writes. OpenClaw memory isolation — separate memory systems (Phase 3)
-8. Fix set-up and create guide to make it more intuitive and user friendly
-9. ~~Name-based read heuristic in classifier~~ (done — PR #34, `inferCategoryFromName` with fail-closed write precedence)
-10. Execution delegation via upstream hook change — propose `result` field on `BeforeToolCallResult` to OpenClaw (spec: `docs/superpowers/specs/2026-03-16-execution-delegation-design.md`). When available: Sentinel executes tools, filters results, returns sanitized output via hook. Interim: 6-layer advisory defense (classify + confirm + output redact + message redact + network isolation + credential isolation)
-11. Update SOUL.md and AGENTS.md so that openclaw knows what sentinel is aware of it. Keep the level of detail 'as needed' so it can't modify sentinel settings
-12. Webhook support in Docker — requires inbound connections incompatible with `internal: true` (cloud deployment scope)
-13. Plugin hot-reload — currently requires gateway restart
-14. secure telegram channels upon server wind-down
-15. Fix vault password masking upon `sentinel start`
-16. Custom undici dispatcher | Full content visibility through CONNECT tunnels (follow-up to domain-level CONNECT proxy). Placeholder injection at proxy. More work but no compromises. Could be built as a general-purpose solution for any library using undici
-17. ~~Populate parameters_summary in /classify~~ (done — PR #34, redact-before-truncate with try-catch for unserializable params)
-18. ~~Stress-test rate limiter and loop guard~~ (done — PR #34, 4 stress tests: 100-req burst, per-agent isolation, retryAfter, 200 concurrent agents)
+5. Set up sentinel memory plugin. Add memory operation test scenarios — Invariants 4 (size caps) and 5 (no credentials in memory) are completely unexercised in production. Generate test workloads that exercise memory writes. OpenClaw memory isolation — separate memory systems (Phase 3). Configure embedding provider for memory search, run `openclaw security audit --deep`
+6. Fix set-up and create guide to make it more intuitive and user friendly 
+7. Execution result passthrough (make the plugin return Sentinel's filtered output as OpenClaw's tool result)
+8. Update SOUL.md and AGENTS.md so that openclaw knows what sentinel is aware of. Keep the level of detail 'as needed' so it can't modify sentinel settings
+9. Webhook support in Docker — requires inbound connections incompatible with `internal: true` (cloud deployment scope)
+10. Plugin hot-reload — currently requires gateway restart
+11. Secure telegram channels upon server wind-down
+12. Fix vault password masking upon `sentinel start`
+13. Custom undici dispatcher | Full content visibility through CONNECT tunnels (follow-up to domain-level CONNECT proxy). Placeholder injection at proxy. More work but no compromises. Could be built as a general-purpose solution for any library using undici
 
 
 **Phase 1 completed** (PR #8, 490 tests). **Memory store** (PR #9, 542 tests). **Phase 2** decomposes into 4 waves.
@@ -415,19 +409,3 @@ Defined in `.claude/settings.json` — includes test, lint, and typecheck comman
 - [Google's Approach for Secure AI Agents](https://research.google/pubs/an-introduction-to-googles-approach-for-secure-ai-agents/)
 - [Zero Trust Security](https://workspace.google.com/security/zero-trust/)
 - [Enterprise Security Controls for Gemini in Workspace](https://workspace.google.com/blog/ai-and-machine-learning/enterprise-security-controls-google-workspace-gemini)
-
-#### Notes from Mar. 15
-
-★ Insight from https://openai.com/index/equip-responses-api-computer-environment/
-OpenAI independently validated Sentinel's core architecture. Their "Equip" system (Responses API + Shell Tool + Container Runtime) is structurally the same two-process model we built: model proposes → platform executes → secrets never visible to model. Their "auth-translation sidecar" is functionally equivalent to our executor's useCredential() vault injection. Sentinel is actually ahead in several areas (encrypted vault vs env vars, Merkle audit chain vs simple logging, HITL confirmation vs none, zero-outbound-by-default vs allowlist).
-
-The real gap isn't architectural — it's operational. OpenClaw currently calls /classify for policy decisions but executes auto_approve tools itself, bypassing Sentinel's audit, credential filtering, SSRF protection, and PII scrubbing. OpenAI routes ALL commands through the platform — no bypass path exists. We need to match that.
-
-One good idea to steal: domain-scoped credential binding. OpenAI binds secrets to specific destination domains — the sidecar only injects a credential if the outbound request matches the credential's allowed domain. We have service-keyed vault entries but no egress domain binding.
-───────────────────────────────
-
-The plan identifies 3 priorities:
-
-Route ALL OpenClaw execution through Sentinel (critical — classification without enforcement is a firewall that logs but doesn't block)
-Domain-scoped credential binding (defense-in-depth from OpenAI's design)
-Execution result passthrough (make the plugin return Sentinel's filtered output as OpenClaw's tool result)

@@ -11,6 +11,8 @@ RUN find packages -name dist -type d -exec rm -rf {} + 2>/dev/null; true
 RUN find packages -name '*.tsbuildinfo' -delete 2>/dev/null; true
 RUN find packages -name '*.test.ts' -delete 2>/dev/null; true
 RUN npx tsc -b
+# Build OpenClaw plugin bundle (self-contained single file with @sentinel/types + zod)
+RUN cd packages/openclaw-plugin && npx tsup --config tsup.bundle.config.ts
 
 # Executor stage
 FROM node:22-alpine AS executor
@@ -42,49 +44,34 @@ ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", "packages/agent/dist/loop.js"]
 
 # OpenClaw Gateway stage
-# SENTINEL: OpenClaw is not yet published to npm. This stage runs a lightweight
-# plugin host that loads the Sentinel plugin, exposes /health, and will be
-# replaced with `openclaw gateway` once the package is available.
-# All outbound HTTPS traffic routes through executor's CONNECT tunnel proxy
-# via HTTPS_PROXY=http://executor:3141.
+# SENTINEL: Real OpenClaw gateway with Sentinel plugin. All outbound HTTPS traffic
+# routes through executor's CONNECT tunnel proxy via HTTPS_PROXY=http://executor:3141.
 FROM node:22-alpine AS openclaw-gateway
-RUN apk add --no-cache dumb-init
+RUN apk add --no-cache dumb-init git
 WORKDIR /app
-# Copy Sentinel plugin from build stage
-COPY --from=build /app/packages/openclaw-plugin/dist/ ./plugin/dist/
-COPY --from=build /app/packages/openclaw-plugin/openclaw.plugin.json ./plugin/
-COPY --from=build /app/packages/openclaw-plugin/package.json ./plugin/
-# Copy types dist (plugin dependency)
-COPY --from=build /app/packages/types/dist/ ./packages/types/dist/
-COPY --from=build /app/packages/types/package.json ./packages/types/
-# Node modules for plugin runtime dependencies
-COPY --from=build /app/node_modules ./node_modules/
-# SENTINEL: Prepare OpenClaw extensions directory for plugin deployment
-RUN mkdir -p /app/data /home/node/.openclaw/extensions/sentinel/dist && \
-    chown -R node:node /app/data /home/node/.openclaw
-# Copy plugin to OpenClaw extensions dir (ready for when openclaw is installed)
-COPY --from=build /app/packages/openclaw-plugin/dist/ /home/node/.openclaw/extensions/sentinel/dist/
+
+# Install OpenClaw globally (git required for some transitive dependencies)
+RUN npm install -g openclaw@2026.3.13
+
+# Prepare state directory structure (OpenClaw expects these under OPENCLAW_STATE_DIR)
+RUN mkdir -p /app/state/extensions/sentinel/dist \
+             /app/state/agents /app/state/logs \
+             /app/state/workspace /app/state/memory \
+             /app/state/credentials /app/state/delivery-queue \
+             /app/state/telegram /app/data && \
+    chown -R node:node /app/state /app/data
+
+# Stage plugin files for entrypoint to copy into volume on each start
+# (volume mount overlays /app/state — can't rely on image layer files)
+COPY --from=build /app/packages/openclaw-plugin/dist/bundle/register.js /app/plugin-staging/dist/register.js
+COPY --from=build /app/packages/openclaw-plugin/openclaw.plugin.json /app/plugin-staging/openclaw.plugin.json
+COPY --from=build /app/packages/openclaw-plugin/package.json /app/plugin-staging/package.json
+
+# Entrypoint script patches host config for Docker networking, then starts gateway
+COPY docker/openclaw-entrypoint.sh /app/openclaw-entrypoint.sh
+RUN chmod +x /app/openclaw-entrypoint.sh
+
 USER node
 EXPOSE 8080
 ENTRYPOINT ["dumb-init", "--"]
-# Lightweight plugin host: health endpoint + plugin readiness check
-# When openclaw is published to npm, replace CMD with:
-#   CMD ["openclaw", "gateway", "--plugin", "/home/node/.openclaw/extensions/sentinel"]
-CMD ["node", "-e", "\
-const http = require('http');\
-const fs = require('fs');\
-const pluginExists = fs.existsSync('/app/plugin/dist/register.js');\
-const manifest = pluginExists ? JSON.parse(fs.readFileSync('/app/plugin/openclaw.plugin.json','utf8')) : null;\
-console.log(`[openclaw-gateway] Plugin: ${manifest?.name ?? 'not found'} v${manifest?.version ?? '?'}`);\
-console.log(`[openclaw-gateway] Executor: ${process.env.SENTINEL_EXECUTOR_URL ?? 'not configured'}`);\
-console.log(`[openclaw-gateway] HTTPS_PROXY: ${process.env.HTTPS_PROXY ?? 'not set'}`);\
-const server = http.createServer((req,res) => {\
-  if (req.url === '/health') {\
-    res.writeHead(200, {'Content-Type':'application/json'});\
-    res.end(JSON.stringify({status:'ok',plugin:manifest?.name,version:manifest?.version,proxy:!!process.env.HTTPS_PROXY}));\
-  } else {\
-    res.writeHead(404); res.end();\
-  }\
-});\
-server.listen(8080, '0.0.0.0', () => console.log('[openclaw-gateway] Listening on :8080'));\
-"]
+CMD ["/app/openclaw-entrypoint.sh"]
